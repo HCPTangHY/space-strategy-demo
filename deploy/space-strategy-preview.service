@@ -1,0 +1,21 @@
+[Unit]
+Description=Space Strategy read-only Rust preview API
+After=network.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+WorkingDirectory=/www/wwwroot/space-strategy
+ExecStart=/www/wwwroot/space-strategy/bin/web-preview
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_INET AF_UNIX
+MemoryMax=128M
+TasksMax=16
+
+[Install]
+WantedBy=multi-user.target

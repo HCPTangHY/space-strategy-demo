@@ -1,0 +1,18 @@
+[package]
+name = "space-strategy"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "space_strategy_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+game-core = { path = "../crates/game-core" }
+tauri = { version = "2", features = [] }
