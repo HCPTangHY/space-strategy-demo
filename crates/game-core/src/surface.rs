@@ -5,8 +5,8 @@
 //!    - Land & 1st-ring coastal water (`t = ±1`): retained and split along wide edges for sharp coasts
 //!    - 2nd-ring continental shelf (`t = -2`): retained at medium density (`CoastalSea`)
 //!    - Open deep ocean (`t <= -3`): merged via coarse minimum-distance sampling + relaxation into broad sea zones (`DeepOcean`)
-//! 4. Exact Delaunay half-edge dual loop extraction for closed continent coastlines & inland lakes
-//! 5. Region clustering: 18 land macro-regions (absorbing adjacent `CoastalSea` shelves) + 4 pelagic `DeepOcean` zones
+//! 4. Exact Delaunay half-edge dual loop extraction for closed continent coastlines, inland lakes & shelf contours
+//! 5. Region clustering: 12 land macro-regions (absorbing adjacent `CoastalSea` shelves) + 4 pelagic `DeepOcean` zones
 
 use delaunator::{triangulate, Point as DPoint, EMPTY};
 use serde::{Deserialize, Serialize};
@@ -16,60 +16,206 @@ use std::collections::{BinaryHeap, HashMap, VecDeque};
 pub const SURFACE_WIDTH: f32 = 1200.0;
 pub const SURFACE_HEIGHT: f32 = 640.0;
 pub const DEFAULT_GRID_CELLS: usize = 1000;
-pub const DEFAULT_LAND_REGIONS: usize = 18;
+pub const DEFAULT_LAND_REGIONS: usize = 12;
 pub const DEFAULT_OCEAN_REGIONS: usize = 4;
 pub const SEA_LEVEL: u8 = 20;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TerrainKind {
-    Plains,
-    Forest,
-    Hills,
-    Mountains,
-    Arid,
-    Tundra,
-    CoastalSea,
-    DeepOcean,
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum TileTag {
+    Land = 0,
+    Sea = 1,
+    Coastal = 2,
+    CoastalSea = 3,
+    DeepOcean = 4,
+    InlandSea = 5,
+    Plains = 6,
+    Hills = 7,
+    Mountains = 8,
+    Forest = 9,
+    Arid = 10,
+    Tundra = 11,
 }
 
-impl TerrainKind {
-    pub fn is_water(self) -> bool {
-        matches!(self, Self::CoastalSea | Self::DeepOcean)
+impl TileTag {
+    pub const ALL: [Self; 12] = [
+        Self::Land,
+        Self::Sea,
+        Self::Coastal,
+        Self::CoastalSea,
+        Self::DeepOcean,
+        Self::InlandSea,
+        Self::Plains,
+        Self::Hills,
+        Self::Mountains,
+        Self::Forest,
+        Self::Arid,
+        Self::Tundra,
+    ];
+
+    #[inline]
+    pub const fn bit(self) -> u64 {
+        1u64 << (self as u8)
     }
 
-    pub fn display_name(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Plains => "平原",
-            Self::Forest => "森林",
-            Self::Hills => "丘陵",
-            Self::Mountains => "山脉",
-            Self::Arid => "荒漠",
-            Self::Tundra => "冻土",
+            Self::Land => "land",
+            Self::Sea => "sea",
+            Self::Coastal => "coastal",
+            Self::CoastalSea => "coastal_sea",
+            Self::DeepOcean => "deep_ocean",
+            Self::InlandSea => "inland_sea",
+            Self::Plains => "plains",
+            Self::Hills => "hills",
+            Self::Mountains => "mountains",
+            Self::Forest => "forest",
+            Self::Arid => "arid",
+            Self::Tundra => "tundra",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "land" => Some(Self::Land),
+            "sea" => Some(Self::Sea),
+            "coastal" => Some(Self::Coastal),
+            "coastal_sea" => Some(Self::CoastalSea),
+            "deep_ocean" => Some(Self::DeepOcean),
+            "inland_sea" => Some(Self::InlandSea),
+            "plains" => Some(Self::Plains),
+            "hills" => Some(Self::Hills),
+            "mountains" => Some(Self::Mountains),
+            "forest" => Some(Self::Forest),
+            "arid" => Some(Self::Arid),
+            "tundra" => Some(Self::Tundra),
+            _ => None,
+        }
+    }
+
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::Land => "陆地",
+            Self::Sea => "海域",
+            Self::Coastal => "沿海",
             Self::CoastalSea => "近海大陆架",
             Self::DeepOcean => "远洋深海",
+            Self::InlandSea => "内陆湖海",
+            Self::Plains => "平原",
+            Self::Hills => "丘陵",
+            Self::Mountains => "山脉",
+            Self::Forest => "树林",
+            Self::Arid => "荒漠",
+            Self::Tundra => "冻土",
         }
+    }
+}
+
+/// Composable 8-byte bitset of tile geography & biome tags (`["land", "coastal", "hills", "forest"]`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct TileTags(pub u64);
+
+impl TileTags {
+    pub const EMPTY: Self = Self(0);
+
+    #[inline]
+    pub const fn with(self, tag: TileTag) -> Self {
+        Self(self.0 | tag.bit())
+    }
+
+    #[inline]
+    pub const fn has(self, tag: TileTag) -> bool {
+        (self.0 & tag.bit()) != 0
+    }
+
+    #[inline]
+    pub const fn is_water(self) -> bool {
+        self.has(TileTag::Sea)
+    }
+
+    #[inline]
+    pub const fn contains_all(self, mask: Self) -> bool {
+        (self.0 & mask.0) == mask.0
+    }
+
+    #[inline]
+    pub const fn intersects(self, mask: Self) -> bool {
+        (self.0 & mask.0) != 0
+    }
+
+    pub fn iter(self) -> impl Iterator<Item = TileTag> {
+        TileTag::ALL.into_iter().filter(move |&t| self.has(t))
     }
 
     fn expansion_cost(self) -> f32 {
-        match self {
-            Self::Plains | Self::Forest => 1.0,
-            Self::Hills | Self::Arid | Self::Tundra => 1.65,
-            Self::Mountains => 3.8,
-            Self::CoastalSea | Self::DeepOcean => 1.2,
+        if self.has(TileTag::Mountains) {
+            3.8
+        } else if self.has(TileTag::Hills)
+            || self.has(TileTag::Arid)
+            || self.has(TileTag::Tundra)
+        {
+            1.65
+        } else if self.is_water() {
+            1.2
+        } else {
+            1.0
         }
     }
 
-    fn habitability(self) -> f32 {
-        match self {
-            Self::Plains => 1.0,
-            Self::Forest => 0.85,
-            Self::Hills => 0.65,
-            Self::Arid => 0.35,
-            Self::Tundra => 0.30,
-            Self::Mountains => 0.15,
-            Self::CoastalSea | Self::DeepOcean => 0.0,
+    pub fn habitability_permille(self) -> u16 {
+        if self.is_water() || !self.has(TileTag::Land) {
+            return 0;
         }
+        let mut score: i32 = if self.has(TileTag::Mountains) {
+            150
+        } else if self.has(TileTag::Hills) {
+            680
+        } else if self.has(TileTag::Tundra) {
+            300
+        } else if self.has(TileTag::Arid) {
+            350
+        } else if self.has(TileTag::Plains) {
+            1000
+        } else {
+            750
+        };
+        if self.has(TileTag::Forest) && !self.has(TileTag::Mountains) {
+            score -= 120;
+        }
+        if self.has(TileTag::Coastal) {
+            score += 150;
+        }
+        score.clamp(100, 1200) as u16
+    }
+
+    #[inline]
+    pub fn habitability_percent(self) -> u16 {
+        (self.habitability_permille() + 5) / 10
+    }
+
+    #[inline]
+    pub fn habitability(self) -> f32 {
+        f32::from(self.habitability_permille()) / 1000.0
+    }
+}
+
+impl Serialize for TileTags {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let list: Vec<&'static str> = self.iter().map(TileTag::as_str).collect();
+        list.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for TileTags {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let list = Vec::<String>::deserialize(deserializer)?;
+        let mut tags = TileTags::EMPTY;
+        for s in list {
+            if let Some(tag) = TileTag::parse(&s) {
+                tags = tags.with(tag);
+            }
+        }
+        Ok(tags)
     }
 }
 
@@ -86,13 +232,11 @@ pub struct SurfaceRegion {
 }
 
 /// Compact simulation metadata stored per tile in ECS (no polygon vertices retained in World).
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TileGeography {
     pub region_id: u16,
-    pub terrain: TerrainKind,
     pub elevation: u8,
-    pub coastal: bool,
-    pub center: [f32; 2],
+    pub tags: TileTags,
 }
 
 /// On-demand polygon tile (covering both land and graded sea tiles) sent once when viewing a planet.
@@ -100,9 +244,9 @@ pub struct TileGeography {
 pub struct SurfacePolygonTile {
     pub index: u16,
     pub region_id: u16,
-    pub terrain: TerrainKind,
+    pub tags: TileTags,
     pub elevation: u8,
-    pub coastal: bool,
+    pub habitability: u16,
     pub center: [f32; 2],
     pub polygon: Vec<[f32; 2]>,
     pub neighbors: Vec<u16>,
@@ -124,13 +268,14 @@ pub struct PlanetSurfaceSnapshot {
     pub tiles: Vec<SurfacePolygonTile>,
     pub land_loops: Vec<Vec<[f32; 2]>>,
     pub lake_loops: Vec<Vec<[f32; 2]>>,
+    pub shelf_loops: Vec<Vec<[f32; 2]>>,
     pub region_borders: Vec<[[f32; 2]; 2]>,
-    pub maritime_borders: Vec<[[f32; 2]; 2]>,
 }
 
 pub struct GeneratedSimSurface {
     pub regions: Vec<SurfaceRegion>,
     pub tiles: Vec<TileGeography>,
+    pub tile_neighbors: Vec<Vec<u16>>,
     pub land_tile_count: usize,
     pub sea_tile_count: usize,
     pub starter_tile_index: usize,
@@ -723,38 +868,87 @@ fn markup_distance_field(vor: &VoronoiDiagram, heights: &mut [u8]) -> (Vec<i8>, 
     (t, is_ocean)
 }
 
-fn classify_land_terrain(
+fn classify_land_tags(
     seed: u64,
     x: f64,
     y: f64,
     width: f64,
     height: f64,
     elevation: u8,
-) -> TerrainKind {
-    if elevation >= 72 {
-        return TerrainKind::Mountains;
-    }
-    if elevation >= 53 {
-        return TerrainKind::Hills;
+    is_coastal: bool,
+) -> TileTags {
+    let mut tags = TileTags::EMPTY.with(TileTag::Land);
+    if is_coastal {
+        tags = tags.with(TileTag::Coastal);
     }
 
     let ny = y / height;
     let lat = (ny - 0.5).abs() * 2.0;
     let temp_jitter = (fbm(seed ^ 0xabcd_1234, x / width * 5.0, ny * 5.0, 3) - 0.5) * 0.16;
     let polar_metric = lat + temp_jitter + (elevation.saturating_sub(20) as f64) * 0.004;
+    let moisture = fbm(seed ^ 0xdcba_4321, x / width * 4.8 + 7.1, ny * 4.8 - 2.3, 4);
+
+    if elevation >= 72 {
+        tags = tags.with(TileTag::Mountains);
+        if polar_metric > 0.78 {
+            tags = tags.with(TileTag::Tundra);
+        }
+        return tags;
+    }
+
+    if elevation >= 53 {
+        tags = tags.with(TileTag::Hills);
+        if polar_metric > 0.76 {
+            tags = tags.with(TileTag::Tundra);
+        } else if moisture < 0.34 && polar_metric < 0.58 {
+            tags = tags.with(TileTag::Arid);
+        }
+        if moisture > 0.54 {
+            tags = tags.with(TileTag::Forest);
+        }
+        return tags;
+    }
 
     if polar_metric > 0.74 {
-        return TerrainKind::Tundra;
-    }
-
-    let moisture = fbm(seed ^ 0xdcba_4321, x / width * 4.8 + 7.1, ny * 4.8 - 2.3, 4);
-    if moisture < 0.37 && polar_metric < 0.58 {
-        TerrainKind::Arid
-    } else if moisture > 0.54 {
-        TerrainKind::Forest
+        tags = tags.with(TileTag::Tundra);
+        if moisture > 0.56 {
+            tags = tags.with(TileTag::Forest);
+        }
+    } else if moisture < 0.37 && polar_metric < 0.58 {
+        tags = tags.with(TileTag::Arid);
     } else {
-        TerrainKind::Plains
+        tags = tags.with(TileTag::Plains);
+        if moisture > 0.54 {
+            tags = tags.with(TileTag::Forest);
+        }
     }
+    tags
+}
+
+fn trace_voronoi_cycles(vor: &VoronoiDiagram, adj: &HashMap<usize, usize>) -> Vec<Vec<[f32; 2]>> {
+    let mut starts: Vec<usize> = adj.keys().copied().collect();
+    starts.sort_unstable();
+    let mut visited: HashMap<usize, bool> = HashMap::with_capacity(adj.len());
+    let mut loops = Vec::new();
+
+    for start in starts {
+        if visited.contains_key(&start) {
+            continue;
+        }
+        let mut ring = Vec::new();
+        let mut cur = start;
+        while !visited.contains_key(&cur) {
+            visited.insert(cur, true);
+            let pt = vor.vertices[cur];
+            ring.push([round1(pt[0]), round1(pt[1])]);
+            let Some(&nxt) = adj.get(&cur) else { break };
+            cur = nxt;
+        }
+        if ring.len() >= 3 {
+            loops.push(ring);
+        }
+    }
+    loops
 }
 
 fn extract_shore_loops(
@@ -813,39 +1007,35 @@ fn extract_shore_loops(
         edges_by_body[body_id].insert(e / 3, opp / 3);
     }
 
-    let trace_cycles = |adj: &HashMap<usize, usize>| -> Vec<Vec<[f32; 2]>> {
-        let mut starts: Vec<usize> = adj.keys().copied().collect();
-        starts.sort_unstable();
-        let mut visited: HashMap<usize, bool> = HashMap::with_capacity(adj.len());
-        let mut loops = Vec::new();
-
-        for start in starts {
-            if visited.contains_key(&start) {
-                continue;
-            }
-            let mut ring = Vec::new();
-            let mut cur = start;
-            while !visited.contains_key(&cur) {
-                visited.insert(cur, true);
-                let pt = vor.vertices[cur];
-                ring.push([round1(pt[0]), round1(pt[1])]);
-                let Some(&nxt) = adj.get(&cur) else { break };
-                cur = nxt;
-            }
-            if ring.len() >= 3 {
-                loops.push(ring);
-            }
-        }
-        loops
-    };
-
-    let land_loops = trace_cycles(&edges_by_body[0]);
+    let land_loops = trace_voronoi_cycles(vor, &edges_by_body[0]);
     let mut lake_loops = Vec::new();
     for adj in edges_by_body.iter().skip(1) {
-        lake_loops.extend(trace_cycles(adj));
+        lake_loops.extend(trace_voronoi_cycles(vor, adj));
     }
 
     (land_loops, lake_loops)
+}
+
+fn extract_shelf_loops(vor: &VoronoiDiagram, tile_tags: &[TileTags]) -> Vec<Vec<[f32; 2]>> {
+    let n = vor.points_n;
+    let mut adj: HashMap<usize, usize> = HashMap::new();
+    for e in 0..vor.triangles.len() {
+        let p = vor.triangles[e];
+        let q_pt = vor.triangles[next_halfedge(e)];
+        if p >= n || tile_tags[p].has(TileTag::DeepOcean) {
+            continue;
+        }
+        let q_is_deep = q_pt >= n || tile_tags[q_pt].has(TileTag::DeepOcean);
+        if !q_is_deep {
+            continue;
+        }
+        let opp = vor.halfedges[e];
+        if opp == EMPTY {
+            continue;
+        }
+        adj.insert(e / 3, opp / 3);
+    }
+    trace_voronoi_cycles(vor, &adj)
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -878,7 +1068,7 @@ fn name_land_region(
     center: [f32; 2],
     width: f32,
     height: f32,
-    dominant: TerrainKind,
+    dominant: TileTag,
     coastal_share: f32,
     used_short_names: &mut HashMap<String, usize>,
 ) -> String {
@@ -909,11 +1099,11 @@ fn name_land_region(
         &["海湾区", "海峡区", "群岛区", "岬角区"]
     } else {
         match dominant {
-            TerrainKind::Plains => &["平原区", "沃野区", "盆地区", "河谷区"],
-            TerrainKind::Forest => &["林地区", "密林区", "林海区", "翠谷区"],
-            TerrainKind::Hills => &["丘陵区", "台地区", "高地区", "冈峦区"],
-            TerrainKind::Mountains => &["山岳区", "崇山区", "脊岭区", "雪峰区"],
-            TerrainKind::Arid => &["旱原区", "荒漠区", "戈壁区", "沙海区"],
+            TileTag::Plains => &["平原区", "沃野区", "盆地区", "河谷区"],
+            TileTag::Forest => &["林地区", "密林区", "林海区", "翠谷区"],
+            TileTag::Hills => &["丘陵区", "台地区", "高地区", "冈峦区"],
+            TileTag::Mountains => &["山岳区", "崇山区", "脊岭区", "雪峰区"],
+            TileTag::Arid => &["旱原区", "荒漠区", "戈壁区", "沙海区"],
             _ => &["冻土区", "苔原区", "冰原区", "寒原区"],
         }
     };
@@ -960,20 +1150,19 @@ fn name_ocean_region(
 fn assign_all_regions(
     centers: &[[f32; 2]],
     neighbors: &[Vec<u16>],
-    terrains: &[TerrainKind],
-    coastal_flags: &[bool],
+    tile_tags: &[TileTags],
     width: f32,
     height: f32,
 ) -> (Vec<u16>, Vec<SurfaceRegion>) {
     let total_tiles = centers.len();
     let land_indices: Vec<usize> = (0..total_tiles)
-        .filter(|&i| !terrains[i].is_water())
+        .filter(|&i| !tile_tags[i].is_water())
         .collect();
     let shelf_indices: Vec<usize> = (0..total_tiles)
-        .filter(|&i| terrains[i] == TerrainKind::CoastalSea)
+        .filter(|&i| tile_tags[i].has(TileTag::CoastalSea))
         .collect();
     let deep_indices: Vec<usize> = (0..total_tiles)
-        .filter(|&i| terrains[i] == TerrainKind::DeepOcean)
+        .filter(|&i| tile_tags[i].has(TileTag::DeepOcean))
         .collect();
 
     let mut region_of = vec![u16::MAX; total_tiles];
@@ -995,7 +1184,7 @@ fn assign_all_regions(
             members.push(cur);
             for &nb_u16 in &neighbors[cur] {
                 let nb = nb_u16 as usize;
-                if !terrains[nb].is_water() && comp_of[nb] == usize::MAX {
+                if !tile_tags[nb].is_water() && comp_of[nb] == usize::MAX {
                     comp_of[nb] = cid;
                     q.push_back(nb);
                 }
@@ -1049,8 +1238,8 @@ fn assign_all_regions(
         let first = *members
             .iter()
             .max_by(|&&a, &&b| {
-                let sa = terrains[a].habitability() + if coastal_flags[a] { 0.15 } else { 0.0 };
-                let sb = terrains[b].habitability() + if coastal_flags[b] { 0.15 } else { 0.0 };
+                let sa = tile_tags[a].habitability();
+                let sb = tile_tags[b].habitability();
                 sa.partial_cmp(&sb).unwrap_or(Ordering::Equal)
             })
             .unwrap_or(&members[0]);
@@ -1069,7 +1258,7 @@ fn assign_all_regions(
                             + (centers[cand][1] - centers[s][1]).powi(2)
                     })
                     .fold(f32::INFINITY, f32::min);
-                let score = min_d2 * (0.7 + 0.3 * terrains[cand].habitability());
+                let score = min_d2 * (0.7 + 0.3 * tile_tags[cand].habitability());
                 if score > best_score {
                     best_score = score;
                     farthest = cand;
@@ -1098,13 +1287,13 @@ fn assign_all_regions(
         region_of[entry.tile] = entry.region_id;
         for &nb_u16 in &neighbors[entry.tile] {
             let nb = nb_u16 as usize;
-            if terrains[nb].is_water() || region_of[nb] != u16::MAX {
+            if tile_tags[nb].is_water() || region_of[nb] != u16::MAX {
                 continue;
             }
             let dist = ((centers[nb][0] - centers[entry.tile][0]).powi(2)
                 + (centers[nb][1] - centers[entry.tile][1]).powi(2))
             .sqrt();
-            let next_cost = entry.cost + dist * terrains[nb].expansion_cost();
+            let next_cost = entry.cost + dist * tile_tags[nb].expansion_cost();
             if next_cost < best_cost[nb] {
                 best_cost[nb] = next_cost;
                 heap.push(DijkstraEntry {
@@ -1140,11 +1329,11 @@ fn assign_all_regions(
 
     // 3. Assign `CoastalSea` shelf tiles to their adjacent coastal land macro-region via Dijkstra.
     for &land_idx in &land_indices {
-        if coastal_flags[land_idx] {
+        if tile_tags[land_idx].has(TileTag::Coastal) {
             let rid = region_of[land_idx];
             for &nb_u16 in &neighbors[land_idx] {
                 let nb = nb_u16 as usize;
-                if terrains[nb] == TerrainKind::CoastalSea {
+                if tile_tags[nb].has(TileTag::CoastalSea) {
                     let dist = ((centers[nb][0] - centers[land_idx][0]).powi(2)
                         + (centers[nb][1] - centers[land_idx][1]).powi(2))
                     .sqrt();
@@ -1167,7 +1356,7 @@ fn assign_all_regions(
         region_of[entry.tile] = entry.region_id;
         for &nb_u16 in &neighbors[entry.tile] {
             let nb = nb_u16 as usize;
-            if terrains[nb] == TerrainKind::CoastalSea && region_of[nb] == u16::MAX {
+            if tile_tags[nb].has(TileTag::CoastalSea) && region_of[nb] == u16::MAX {
                 let dist = ((centers[nb][0] - centers[entry.tile][0]).powi(2)
                     + (centers[nb][1] - centers[entry.tile][1]).powi(2))
                 .sqrt();
@@ -1248,7 +1437,7 @@ fn assign_all_regions(
             region_of[entry.tile] = entry.region_id;
             for &nb_u16 in &neighbors[entry.tile] {
                 let nb = nb_u16 as usize;
-                if terrains[nb] == TerrainKind::DeepOcean && region_of[nb] == u16::MAX {
+                if tile_tags[nb].has(TileTag::DeepOcean) && region_of[nb] == u16::MAX {
                     let dist = ((centers[nb][0] - centers[entry.tile][0]).powi(2)
                         + (centers[nb][1] - centers[entry.tile][1]).powi(2))
                     .sqrt();
@@ -1297,7 +1486,7 @@ fn assign_all_regions(
         let land_members: Vec<usize> = all_members
             .iter()
             .copied()
-            .filter(|&i| !terrains[i].is_water())
+            .filter(|&i| !tile_tags[i].is_water())
             .collect();
         let sea_count = all_members.len().saturating_sub(land_members.len());
 
@@ -1317,9 +1506,9 @@ fn assign_all_regions(
                 .copied()
                 .min_by(|&a, &b| {
                     let da = ((centers[a][0] - avg_x).powi(2) + (centers[a][1] - avg_y).powi(2))
-                        * if coastal_flags[a] { 1.35 } else { 1.0 };
+                        * if tile_tags[a].has(TileTag::Coastal) { 1.35 } else { 1.0 };
                     let db = ((centers[b][0] - avg_x).powi(2) + (centers[b][1] - avg_y).powi(2))
-                        * if coastal_flags[b] { 1.35 } else { 1.0 };
+                        * if tile_tags[b].has(TileTag::Coastal) { 1.35 } else { 1.0 };
                     da.partial_cmp(&db).unwrap_or(Ordering::Equal)
                 })
                 .unwrap_or(anchor_pool[0]);
@@ -1338,16 +1527,22 @@ fn assign_all_regions(
             let mut terrain_counts = [0usize; 6];
             let mut coastal_count = 0usize;
             for &idx in &land_members {
-                if coastal_flags[idx] {
+                let tt = tile_tags[idx];
+                if tt.has(TileTag::Coastal) {
                     coastal_count += 1;
                 }
-                let b = match terrains[idx] {
-                    TerrainKind::Plains => 0,
-                    TerrainKind::Forest => 1,
-                    TerrainKind::Hills => 2,
-                    TerrainKind::Mountains => 3,
-                    TerrainKind::Arid => 4,
-                    _ => 5,
+                let b = if tt.has(TileTag::Mountains) {
+                    3
+                } else if tt.has(TileTag::Hills) {
+                    2
+                } else if tt.has(TileTag::Tundra) {
+                    5
+                } else if tt.has(TileTag::Arid) {
+                    4
+                } else if tt.has(TileTag::Forest) {
+                    1
+                } else {
+                    0
                 };
                 terrain_counts[b] += 1;
             }
@@ -1358,12 +1553,12 @@ fn assign_all_regions(
                 .map(|(i, _)| i)
                 .unwrap_or(0);
             let dominant = match best_b {
-                0 => TerrainKind::Plains,
-                1 => TerrainKind::Forest,
-                2 => TerrainKind::Hills,
-                3 => TerrainKind::Mountains,
-                4 => TerrainKind::Arid,
-                _ => TerrainKind::Tundra,
+                0 => TileTag::Plains,
+                1 => TileTag::Forest,
+                2 => TileTag::Hills,
+                3 => TileTag::Mountains,
+                4 => TileTag::Arid,
+                _ => TileTag::Tundra,
             };
             let coastal_share = if !land_members.is_empty() {
                 coastal_count as f32 / land_members.len() as f32
@@ -1552,8 +1747,7 @@ pub fn generate_planet_surface(planet_id: &str, seed: u32) -> PlanetSurfaceSnaps
     let mut centers = Vec::with_capacity(tile_count);
     let mut polygons = Vec::with_capacity(tile_count);
     let mut neighbors = Vec::with_capacity(tile_count);
-    let mut terrains = Vec::with_capacity(tile_count);
-    let mut coastal_flags = Vec::with_capacity(tile_count);
+    let mut tile_tags = Vec::with_capacity(tile_count);
     let mut elevations = Vec::with_capacity(tile_count);
 
     let mut land_tile_count = 0usize;
@@ -1586,36 +1780,36 @@ pub fn generate_planet_surface(planet_id: &str, seed: u32) -> PlanetSurfaceSnaps
         let elev = packed_heights[p];
         elevations.push(elev);
 
-        let terrain = if elev >= SEA_LEVEL {
+        let tags = if elev >= SEA_LEVEL {
             land_tile_count += 1;
-            coastal_flags.push(pack_t[p] == 1);
-            classify_land_terrain(seed64, c[0], c[1], width, height, elev)
+            classify_land_tags(seed64, c[0], c[1], width, height, elev, pack_t[p] == 1)
         } else {
-            coastal_flags.push(pack_t[p] == -1);
-            // 1st-ring shore (`-1`), inland lakes (`!pack_is_ocean`), and 2nd-ring non-coarse shelf (`-2`) = CoastalSea.
-            if !pack_is_ocean[p] || pack_t[p] == -1 || (pack_t[p] == -2 && !is_coarse_deep[p]) {
+            let mut wt = TileTags::EMPTY.with(TileTag::Sea);
+            if !pack_is_ocean[p] {
                 coastal_sea_count += 1;
-                TerrainKind::CoastalSea
+                wt = wt.with(TileTag::InlandSea).with(TileTag::CoastalSea);
+            } else if pack_t[p] == -1 || (pack_t[p] == -2 && !is_coarse_deep[p]) {
+                coastal_sea_count += 1;
+                wt = wt.with(TileTag::CoastalSea);
             } else {
                 deep_ocean_count += 1;
-                TerrainKind::DeepOcean
+                wt = wt.with(TileTag::DeepOcean);
             }
+            wt
         };
-        terrains.push(terrain);
+        tile_tags.push(tags);
     }
 
-    // Step 5: Assign regions (18 land macro-regions absorbing adjacent `CoastalSea`, plus 4 pelagic `DeepOcean` zones).
+    // Step 5: Assign regions (12 land macro-regions absorbing adjacent `CoastalSea`, plus 4 pelagic `DeepOcean` zones).
     let (region_of, regions) = assign_all_regions(
         &centers,
         &neighbors,
-        &terrains,
-        &coastal_flags,
+        &tile_tags,
         SURFACE_WIDTH,
         SURFACE_HEIGHT,
     );
 
     let mut region_borders = Vec::new();
-    let mut maritime_borders = Vec::new();
     for e in 0..pack_vor.triangles.len() {
         let opp = pack_vor.halfedges[e];
         if opp == EMPTY || e > opp {
@@ -1641,23 +1835,22 @@ pub fn generate_planet_surface(planet_id: &str, seed: u32) -> PlanetSurfaceSnaps
                 round1(vb[1].clamp(0.0, height)),
             ],
         ];
-        if !terrains[p].is_water() && !terrains[q].is_water() {
+        if !tile_tags[p].is_water() && !tile_tags[q].is_water() {
             region_borders.push(seg);
-        } else if terrains[p].is_water() && terrains[q].is_water() {
-            maritime_borders.push(seg);
         }
     }
 
-    // Step 6: Extract exact closed coastline & lake loops.
+    // Step 6: Extract exact closed coastline, lake, and continental shelf contour loops.
     let (land_loops, lake_loops) = extract_shore_loops(&pack_vor, &packed_heights, &pack_is_ocean);
+    let shelf_loops = extract_shelf_loops(&pack_vor, &tile_tags);
 
     let tiles = (0..tile_count)
         .map(|idx| SurfacePolygonTile {
             index: idx as u16,
             region_id: region_of[idx],
-            terrain: terrains[idx],
+            tags: tile_tags[idx],
             elevation: elevations[idx],
-            coastal: coastal_flags[idx],
+            habitability: tile_tags[idx].habitability_percent(),
             center: centers[idx],
             polygon: polygons[idx].clone(),
             neighbors: neighbors[idx].clone(),
@@ -1678,8 +1871,8 @@ pub fn generate_planet_surface(planet_id: &str, seed: u32) -> PlanetSurfaceSnaps
         tiles,
         land_loops,
         lake_loops,
+        shelf_loops,
         region_borders,
-        maritime_borders,
     }
 }
 
@@ -1689,29 +1882,29 @@ pub fn generate_sim_surface(planet_id: &str, seed: u32) -> GeneratedSimSurface {
     let starter_tile_index = snapshot
         .tiles
         .iter()
-        .position(|t| t.terrain == TerrainKind::Plains && t.coastal)
-        .or_else(|| snapshot.tiles.iter().position(|t| t.terrain == TerrainKind::Plains))
-        .or_else(|| snapshot.tiles.iter().position(|t| !t.terrain.is_water()))
+        .position(|t| t.tags.has(TileTag::Plains) && t.tags.has(TileTag::Coastal))
+        .or_else(|| snapshot.tiles.iter().position(|t| t.tags.has(TileTag::Plains)))
+        .or_else(|| snapshot.tiles.iter().position(|t| t.tags.has(TileTag::Land)))
         .unwrap_or(0);
 
     let land_tile_count = snapshot.land_tile_count;
     let sea_tile_count = snapshot.coastal_sea_count + snapshot.deep_ocean_count;
 
-    let tiles = snapshot
-        .tiles
-        .into_iter()
-        .map(|t| TileGeography {
+    let mut tile_neighbors = Vec::with_capacity(snapshot.tiles.len());
+    let mut tiles = Vec::with_capacity(snapshot.tiles.len());
+    for t in snapshot.tiles {
+        tile_neighbors.push(t.neighbors);
+        tiles.push(TileGeography {
             region_id: t.region_id,
-            terrain: t.terrain,
             elevation: t.elevation,
-            coastal: t.coastal,
-            center: t.center,
-        })
-        .collect();
+            tags: t.tags,
+        });
+    }
 
     GeneratedSimSurface {
         regions: snapshot.regions,
         tiles,
+        tile_neighbors,
         land_tile_count,
         sea_tile_count,
         starter_tile_index,

@@ -1257,7 +1257,7 @@ pub fn clear_local_labor_book(
     book.best_bid_wage_cents = None;
 
     let mut fills = Vec::new();
-    if asks.is_empty() && bids.is_empty() {
+    if bids.is_empty() {
         return fills;
     }
 
@@ -1322,7 +1322,7 @@ pub fn clear_local_labor_book(
             if rem > 0 && bid_px[j] >= pool_wage {
                 let share = ((u64::from(rem) * CONTRACT_POOL_SHARE_PERCENT as u64 + 50) / 100)
                     .min(u64::from(rem)) as u32;
-            if share > 0 {
+                if share > 0 {
                     bid_pool.push((j, share));
                     demand_pool += share;
                 }

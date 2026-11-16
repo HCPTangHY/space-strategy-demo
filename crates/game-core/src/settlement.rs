@@ -716,6 +716,15 @@ impl Game {
                         }
                     }
 
+                    if bids.is_empty() {
+                        let wb = &mut wage_books[r_i];
+                        wb.prev_wage_cents = wb.last_wage_cents;
+                        wb.last_hired = 0;
+                        wb.best_ask_wage_cents = None;
+                        wb.best_bid_wage_cents = None;
+                        continue;
+                    }
+
                     // 2) Collect job-seeker `LaborAsk`s:
                     //    (a) Same-occupation `Unowned` (`XX · 待业`) ALWAYS get first priority!
                     //    (b) Cross-occupation `promote_from` pools (`流民` for manual/military, `个体民`/lower roles
