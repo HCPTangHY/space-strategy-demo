@@ -1,5 +1,68 @@
 # 验证记录
 
+## 具名实体与单槽工场双向盈亏结算、国有工场稳岗兜底及私产破产残值处置机制（2026-11-21）
+
+地址：https://files.zhenxia.top/space-strategy/
+
+- **单槽 `Workshop` 独立周转与归属实体双向盈亏分层（`settlement/mod.rs`、`ai/hiring.rs`、`docs/architecture.md`）**：保留全部生产与服务槽位各自独立的 `Workshop` 账本与存货核算，按产权主体分层处理盈亏归宿与裁员决策权——`LocalPrivate`（本地私产）超额纯利注入 `SectorCapital`，出现亏损时由工场自行缩编裁员、折价变卖存货；具名实体（`State` 政权、`Enterprise` 企业、`Trust` 托拉斯）旗下工场的超额纯利上缴归属实体金库，低于单月运营底线的周转缺口与未付工资亦由归属实体金库拨补（计入实体工场净收支，政权国库优先预留核心军政薪饷储备），单槽工场自身不再因短期亏损擅自自动裁员（政权默认维持编制不因单厂亏损裁员，企业与托拉斯在法人金库吃紧时由实体层面统一缩减亏损分厂）。
+- **私产破产拆解残值收购与直接清拆双选接口（`rules.rs`、`events.jsonc`、`workshop_ops.rs`、`corporate_ops.rs`、`protocol.rs`、`runtime.rs`）**：仅 `LocalPrivate` 连续 3 个月欠薪资不抵债触发单槽破产处置，新增声明式事件 `base:private_bankruptcy` 与显式控制指令 `acquire_bankrupt_slot` / `resolve_pending_event`——辖区管辖政府或上级政府可按建造成本 `25%` 的破产拆解残值收购（残值注入原民间池、结清工人欠薪并补足首月周转金收归公有），或不予收购直接破产清拆；移除旧版主槽破产强行转为 `0` 人国有空壳的分支，清拆主槽时保留同地块无主槽前置依赖的普通独立次槽继续运行。
+- **长协池成本保护、殖民据点财政配平与 20 年长周期回归验证（`ai/pricing.rs`、`01_civic_commercial.jsonc`、`scenario.rs`、`tests.rs`）**：正常工场在商品移动均价低于自身单位成本时暂停向亏本长协池供货，防止破产半价清算单将正常工场拖入长期低价欠薪循环；优化殖民据点人员结构使起步殖民地在长周期运行下保持财政稳健。`RUSTFLAGS="-D warnings" cargo test -p game-core -p web-preview` 全量 24 项单元测试全部通过（0 警告，含国有亏损工场财政兜底零裁员守恒、私产破产残值收购与清拆双路径守恒及殖民星 20 年自动挂机稳态验证）。
+
+## 殖民地长周期经济稳态、盘口滞销解套与民间投资/用工边界修复（2026-11-20）
+
+地址：https://files.zhenxia.top/space-strategy/
+
+- **工场滞销报价、盘口均价回落与居民预算约束修复（`ai/pricing.rs`、`market/commodity_clearing.rs`、`settlement/mod.rs`）**：修正工场单位成本核算分母，按在岗人员正常额定产出与额定原料投入计算 `last_unit_cost_cents`（停工空置时归零），消除临时缺料月份将固定工资除以残次产量造成天价成本锁死的问题；实物工场在库存积压且上月回款低于半数估值时主动向成本线下调挂单价；盘口无现货成交时消除整除四舍五入卡顿，并在零买单零成交且高于初始基准价时允许 `MA` 温和回落；居民口粮急购按家庭实有可用现金约束出价与数量，避免超出钱包承受力的无效报价导致零买单断粮。
+- **民间投资上下游核验、用工需求饱和保护与人口增长反馈（`ai/investment.rs`、`ai/hiring.rs`、`actors/household.rs`、`workshop_ops.rs`）**：民间投资池与企业新建工场前校验配方原料市场供给（流量公用设施要求本地具备富余挂单，工业中间品要求存在真实下游消耗或成交需求），并在资金池未满且本地客流不足半数产能时暂缓抢建商业街；工场在盘口存在未售出过剩流量或高库存滞销时暂停盲目扩招；辖区存在较高比例无业缺粮人口时自动放缓自然增长；修复 `migrate_pioneers_if_frontier` 中 `then_some` 先行求值导致的无符号减法下溢问题。
+- **殖民地开局配比调平与 6 年长周期回归验收（`01_civic_commercial.jsonc`、`actors/polity.rs`、`scenario.rs`、`tests.rs`）**：将 `殖民据点` 基础水电产出调整为 `14 电力 + 14 工业淡水`，着陆点配置 `殖民据点 + 1x 现代农场` 与精干先遣人口储备；新增 `colony_six_year_sim_keeps_staple_prices_stable_and_avoids_mass_destitution`（连续推进 72 个月自动运行验证主粮价格平稳、产储覆盖需求且无大规模流民赤贫）。`RUSTFLAGS="-D warnings" cargo test -p game-core -p web-preview` 23 项单元测试全部通过（0 警告），静态 musl 版 `web-preview` 部署与公网 Playwright 全链路验收通过，线上服务已重置回 `0001.01.01` 暂停状态。
+
+## 殖民地开局剧本、大区中心候选格、行政力连片框地与先遣据点迁工机制（2026-11-20）
+
+地址：https://files.zhenxia.top/space-strategy/
+
+- **大区中心候选格 `TileTag::CoreSite` 自动选点与外部数据配置（`surface.rs`、`building.rs`、`gamedata/`）**：地表生成与定稿地图加载时，在每个陆地地理大区远离跨区省界缝隙处自动标定 `1~2` 个腹地中心与天然良港候选格 `core_site`，约束行星首府、大区核心与殖民据点选址；`GoodDef` 新增 `non_market` 非盘口流通标记并在 `goods.jsonc` 配置 `base:admin`（行政管理力），在 `01_civic_commercial.jsonc` 配置零水电前置输入、自给基础行政力与本地水电运力的 `base:colonial_outpost`（殖民据点）。
+- **政权 `base:admin` 直辖容量核算、无主荒野连片框地与分离省 `Sector` 自动创建（`polity_ops.rs`、`planet.rs`、`settlement/`）**：政权按基础保底额度与在岗核心/据点实际产出实时核算 `admin_used / admin_capacity`（每实控 `1` 格陆地占 `1` 份行政力，邻接 `CoastalSea` 大陆架 `0` 成本自动随迁）；支持单格 `claim_tile` 与大区 `claim_region_frontier` 连片框入无主荒野（`sector_id == u16::MAX`），跨入尚未设省的地理大区或同一地理大区存在多政权实控时，按 `(geo_region_id, owner_polity)` 自动拆分创建分离省 `Sector` 并刷新陆海交通拓扑。
+- **跨大区殖民据点开埠与先遣人口守恒迁工（`workshop_ops.rs`）**：在空白新辖区已框入的 `core_site` 建造首座 `殖民据点` 时，自动从同政权人口充裕辖区按人数比例守恒迁入先遣人口及其家庭现金与口粮储备，并同步锁定初始岗位劳动合同，严守全盘货币与实物守恒。
+- **双开局剧本（`ScenarioPreset`：`earth` / `colony`）与前端交互落地（`scenario.rs`、`runtime.rs`、`src/App.tsx`、`src/PlanetSurfaceView.tsx`）**：新增 `seed_colony_scenario_world`（新泰拉殖民星：着陆点 `core_site` 与周边共 `9` 格初始立足点、`9/22` 直辖额度，其余陆地为待拓荒无主荒野），保留 `seed_earth_scenario_world` 默认地球开局，支持顶部栏运行期一键切换剧本重开；地图区分渲染已框入政区实控边界、无主荒野暗色地块与 `core_site` 中心选址标记，大区窗口与地块窗口接入连片框地与据点升级改建操作。
+- **全量编译、测试与公网端到端验证**：`RUSTFLAGS="-D warnings" cargo test -p game-core -p web-preview` 22 项单元测试全部通过（0 警告，含殖民地开局连片框地、跨区建殖民据点先遣迁工、升级大区核心及多政权同地理大区分离省货币实物守恒验证）；`npm run build`（`tsc --noEmit && vite build`）、静态 musl 版 `web-preview` 部署与公网 Playwright 自动化测试（含剧本切换、`9/22` 行政力框地增长、两级地图缩放回归及 `1280×800` / `640×600` 零横向溢出核验）全部通过，线上服务已重置回地球开局 `0001.01.01` 暂停状态。
+
+## 商业服务流量机制、Pop 周转余钱消费投资、同构多级政权分税与跨国投资准入机制收口（2026-11-18）
+
+地址：https://files.zhenxia.top/space-strategy/
+
+- **商业街并入服务商品供需体系并移除旧私产座数硬锁（`market.rs`、`lib.rs`、`decision.rs`、`settlement.rs`）**：移除“2 座基础私产 / 6 座商业街托管上限”计数硬锁、挂牌私有化免费送商业街特判及国库建商业街归私产特判；为 `BuildingDef` 增加通用前置主槽标签校验 `required_primary_tags`（不追加机制专用容量字段）；新增 `GoodDef` 服务需求、超额转满意与动态资金池容量系数，使商业街作为普通单槽 `Workshop` 产出本地流量服务 `base:service`（零体积、月末清零、按 `1.0` 倍当月需求采购），口粮温饱度与服务满意度分轨独立结算，按本区服务实际产出动态放大 `SectorCapital` 上限，并由 `EVENT_SECTOR_INVEST_COMMERCIAL` 事件驱动民间商业设施涌现、通用行业标签驱动企业园区合并组建。
+- **`PopGroup` 周转金储备与富余现金消费/投资闭环（`economy.rs`、`decision.rs`、`settlement.rs`）**：在 `PopTypeDef` 增加家庭应急储备月数 `reserve_months` 及富余现金消费/投资分配千分比；居民留足储备金后，富余现金自动拆分为本地盘口增购服务（转化为当月额外满意度）与公开盘口认购债券/托拉斯股权（无挂牌证券且本区民间池未满时注入 `SectorCapital`），同时移除 `Workshop` 初始成本对 `GENESIS_APPLE_PRICE_CENTS` 的残余引用。
+- **同构多级 `Polity` 树、源头分税直征与跨国直接投资/强制没收原语（`economy.rs`、`lib.rs`、`settlement.rs`、`rules.rs`）**：`Polity` 新增 `parent_polity` 与 `upward_tax_share_permille`，`Sector` 新增 `admin_polity` 与 `foreign_investment_rights`；结算层解除单一国库限制，在扣税源头按上下级分税比例直征入库，并严格保护“一级政府、一级产权”；新增 `create_polity`、`set_sector_admin_polity`、`grant_investment_right`、`transfer_polity_funds`、`build_on_tile_as` 与 `expropriate_slot`（强制无偿没收并触发 `EVENT_FORCED_EXPROPRIATION` 扣减信用评级），使国内跨级直投央企、跨区公产、地方政府 AI 自建及外国凭条约直建工场共用同一套守恒结算算式。
+- **架构文档与测试验证**：重写 `docs/architecture.md` 并附完整“机制—数据”划分总表；`RUSTFLAGS="-D warnings" cargo test -p game-core -p web-preview` 17 项单元测试全部通过（0 警告），`npm run build`（`tsc --noEmit && vite build`）构建通过。
+
+## 尺度无关 N×N 矩阵、声明式事件与 if-else 规则执行器及纯数据目录解耦（2026-11-17）
+
+地址：https://files.zhenxia.top/space-strategy/
+
+- **抽象尺度无关 `N × N` 节点矩阵与参数化空间撮合机制（`market.rs`）**：将原先绑死行星陆海常量的 `LogisticsMatrix` 升级为尺度无关的 `NodeMatrix`（支持通过 `NodeNetworkSpec` 配置直连边、`HubCliqueRule` 共享枢纽团与可选 Floyd 多跳中转，并提供零和守恒的通用成对计算算子 `compute_pairwise_flows`）；将市场交易制度参数提取为挂载在 `GoodDef` 上的 `MarketClearingRule`（`contract_pool_percent`、`PricingMode`、`ma_inertia_weight`），由 `clear_spatial_good_market` 同时兼容大区网络与星球网络。
+- **新增声明式事件与 `if-else +-` 规则执行器（`rules.rs`、`settlement.rs`、`lib.rs`）**：实现纯数据可序列化的条件树 `RuleCond`（含双变量比较 `CompareVars`）、类 P 社 `if-else +-` 权重打分器 `AiWeightSpec`、守恒效果原语 `RuleEffect`、`EventCatalog` 与待决事件队列 `PendingEvent`。双边供货契约到期（`EVENT_BILATERAL_CONTRACT_DUE`）与标准付息债权兑付（`EVENT_COUPON_CLAIM_DUE`、`issue_standardized_claim`）统一转为触发事件：AI 主体按 `if-else +-` 权重自动选择履约或违约选项，玩家控制主体（`controlled_actor`）排入 `PendingEvent` 队列由 `resolve_pending_event` 手动抉择。
+- **消除机制层对具体商品、建筑与职业名称的硬编码耦合（`lib.rs`、`decision.rs`、`settlement.rs`、`economy.rs`）**：将 `BUILTIN_BUILDINGS` 升级为动态可注册的 `BuildingCatalog`（`Tile` 保持 `<= 24` 字节紧凑结构）；在 `PopTypeDef` 新增 `redemption_tier` 数据驱动清偿顺位（移除 `decision.rs` 对 `POP_SOLDIER`/`POP_BUREAUCRAT` 的硬编码）；在 `GoodDef` 新增 `staple_demand_per_100`、`strategic_depot_target` 与 `coupon_permille_per_month`，使 `decision.rs` 与 `settlement.rs` 彻底解耦 `GOOD_APPLE`，可在完全自定义的商品、建筑与职业数据表下独立运行并保持严格货币守恒。
+- **架构文档同步与编译测试验证**：更新 `docs/architecture.md`，`RUSTFLAGS="-D warnings" cargo test -p game-core -p web-preview` 16 项单元测试全部通过（0 警告，含 4 星球跃迁门网络多跳撮合、无 `base:apple` 自定义多商品产业链守恒、主权公债票息兑付及玩家手动违约事件测试），`npm run build`（`tsc --noEmit && vite build`）构建通过。
+
+## 五类主体、三套对称金库、自动多商品盘口与三条交互通道机制落地（2026-11-17）
+
+地址：https://files.zhenxia.top/space-strategy/
+
+- **更新 `docs/architecture.md` 双维度架构基线**：补充横向三层职责划分（Rust 代码机制 / 静态数据表 / 声明式规则脉冲）、五类 AI 决策主体（`PopGroup`、单槽 `Workshop`、`SectorCapital` 本地民间池、`Enterprise`/`Trust`、政权 `Polity`）、五项底层代码机制与三条实体交互通道规范。
+- **移除无建筑自给“个体民”并收敛为 7 类现代职业（`economy.rs`、`lib.rs`、`settlement.rs`）**：默认职业表移除 `POP_SUBSISTENCE`，所有实物商品须由具体建筑槽位生产；默认人口蓄水池改为 `劳工`（未签约人员统一归入 `劳工 · 待业`，储蓄耗尽且缺粮时沿 `demote_to` 降入底层 `流民`），同时保留自定义模组配置 `subsistence_apple_per_100 > 0` 的数据表兼容能力。
+- **三套对称金库与 `SectorCapital` 闭环（`economy.rs`、`decision.rs`、`settlement.rs`）**：为具名企业 `Enterprise` 与星际托拉斯 `Trust` 建立各自独立的法人金库 `vault: Inventory`，与辖区民间池 `SectorCapital.vault` 彻底分离；单槽 `Workshop` 超额利润按产权分别归集至 `Polity.vault`、`Enterprise.vault`/`Trust.vault`、`SectorCapital.vault`；`SectorCapital` 新增无商业街基础免托管额度（2 座）、满足条件时自动出资兴建 `商业街`、超出池顶上限部分 100% 溢出分红给当地 `资本家` 防死水锁钱，以及资金充裕时跨区前往未开发辖区投建首座开荒私营厂并落户新辖区名下。
+- **自动多商品盘口与三条交互通道权限底座（`market.rs`、`economy.rs`、`lib.rs`）**：`SectorMarket` 遍历 `GoodCatalog` 自动为所有非货币商品建立 `SectorOrderBook`，并根据 `TransportChannel` 区分本地限定、电讯零运费无限运力（债券与 `Trust` 股权）及陆海物理运力；建筑支持通用 `monthly_inputs` → `monthly_output` 配方生产与原料自动挂买单；实装通道一产权核验（`check_channel1_slot_authority`，禁止政权绕过赎买直接改写私营/企业槽位编制）与通道三具名主体双边供货契约（`CounterpartyId` / `BilateralSupplyContract`，硬性拦截 `LocalPrivate`/`SectorCapital` 进入通道三，违约自动扣减 `credit_rating`）及 `Trust` 股权按全员 `Inventory` 持仓比例自动分红。
+- **编译与测试验证**：`cargo test -p game-core -p web-preview` 15 项单元测试全部通过（0 警告，含三金库隔离、满池溢出分红、跨区开荒落户、自动建商业街、动态注册托拉斯股权盘口与分红守恒、通道一/通道三权限拦截及违约降级验证），`npm run build`（`tsc --noEmit && vite build`）构建通过。
+
+## 自主实体决策层与客观结算层分离、两步跨区边际定价及优先兑付/破产闭环（2026-11-16）
+
+地址：https://files.zhenxia.top/space-strategy/
+
+- **确立架构规范 `docs/architecture.md` 并拆分 `decision.rs` / `settlement.rs`**：将凡涉及两个自主实体交互的操作（劳资期中买断裁员、`1/24` 到期重议、盘口挂单报价、履约/暂缓兑付开关、兑付优先级排序、民间资本投资）全部归入 `crates/game-core/src/decision.rs` 及统一槽位控制接口（`set_slot_target_jobs`、`set_slot_wage_redemption`）；`settlement.rs` 仅保留纯物理产出、中立盘口清算、优先债权扣划、消费腐损与破产退出。
+- **跨辖区两步边际出厂价（Spatial Call Auction，`market.rs`）**：商品盘口改为第一步按跨区到岸价差配对数量与运力，第二步按各产地成交卖单边际要价 `max_filled_ask`（及供不应求时的买方最低净出价 `min_filled_netback`）统一结算该产地所有成交卖单的出厂离岸价；消除破产半价清算单单独贱卖及单点低价卖单误触发全区长协池减半的问题。
+- **解雇补偿、兑付顺位与欠薪债权破产闭环**：有偿付能力的雇主期中主动减员须支付 1 个月合同工资作为补偿；多槽位付款主体（如国库）按 `军人` → 核心行政工程 → 文教普通岗位顺位兑付；工场欠薪违约自动记入优先于股东分红的 `UnpaidWageClaim`，私营工场连续 3 个月欠薪未清则通过盘口折价变现存货并完成破产退出，全程严格保持现金与实物守恒。
+- **编译与测试验证**：`cargo test -p game-core -p web-preview` 14 项单元测试全部通过（0 警告），`npm run build`（`tsc --noEmit && vite build`）构建通过。
+
 ## 职业独立待业、破产流民滑落、长协现货解锁、欠薪工场裁员与通用投资核算（2026-11-15）
 
 地址：https://files.zhenxia.top/space-strategy/

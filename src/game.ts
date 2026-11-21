@@ -2,6 +2,8 @@ import { Channel, invoke, isTauri } from '@tauri-apps/api/core';
 
 export type GameSpeed = 0 | 1 | 2 | 3 | 4;
 
+export type ScenarioPreset = 'earth' | 'colony';
+
 export type TileTagId =
   | 'land'
   | 'sea'
@@ -14,7 +16,8 @@ export type TileTagId =
   | 'mountains'
   | 'forest'
   | 'arid'
-  | 'tundra';
+  | 'tundra'
+  | 'core_site';
 
 export const TILE_TAG_LABELS: Record<TileTagId, string> = {
   land: '陆地',
@@ -29,6 +32,7 @@ export const TILE_TAG_LABELS: Record<TileTagId, string> = {
   forest: '树林',
   arid: '荒漠',
   tundra: '冻土',
+  core_site: '中心选址',
 };
 
 export function isWaterTags(tags: readonly TileTagId[]): boolean {
@@ -44,7 +48,14 @@ export type BuildingTagId =
   | 'regional_core'
   | 'agriculture'
   | 'commercial'
-  | 'corporate_campus';
+  | 'corporate_campus'
+  | 'power'
+  | 'water'
+  | 'mining'
+  | 'refining'
+  | 'manufacturing'
+  | 'military'
+  | 'infrastructure';
 
 export const BUILDING_TAG_LABELS: Record<BuildingTagId, string> = {
   planetary_capital: '行星首府',
@@ -52,17 +63,28 @@ export const BUILDING_TAG_LABELS: Record<BuildingTagId, string> = {
   agriculture: '农业设施',
   commercial: '商业街',
   corporate_campus: '企业园区',
+  power: '电力设施',
+  water: '水务设施',
+  mining: '采掘设施',
+  refining: '精炼化工',
+  manufacturing: '高端制造',
+  military: '军工防务',
+  infrastructure: '跨区基建',
 };
+
+export type TransportChannel = 'local_only' | 'power_grid' | 'telecom' | 'physical';
 
 export type TileSlotKey = 'primary' | 'secondary0' | 'secondary1' | 'secondary2';
 
 export const BUILDING_APPLE_ORCHARD = 'base:apple_orchard';
 export const BUILDING_REGIONAL_CORE = 'base:regional_core';
 export const BUILDING_PLANETARY_CAPITAL = 'base:planetary_capital';
+export const BUILDING_COLONIAL_OUTPOST = 'base:colonial_outpost';
 export const BUILDING_COMMERCIAL_STREET = 'base:commercial_street';
 export const BUILDING_CORPORATE_CAMPUS = 'base:corporate_campus';
 
 export interface TimeSnapshot {
+  scenario: ScenarioPreset;
   epoch_name: string;
   year: number;
   month: number;
@@ -126,6 +148,9 @@ export interface PolitySnapshot {
   name: string;
   treasury: number;
   treasury_cents: number;
+  credit_rating?: number;
+  admin_used: number;
+  admin_capacity: number;
   monetary_policy: MonetaryPolicy;
   monetary_policy_label: string;
   tax_rate_percent: number;
@@ -182,6 +207,8 @@ export interface EnterpriseSnapshot {
   hosted_count: number;
   hosting_capacity: number;
   output_bonus_percent: number;
+  treasury: number;
+  credit_rating: number;
   last_revenue: number;
   last_profit: number;
 }
@@ -195,6 +222,23 @@ export interface BuildingOwnerSnapshot {
   privatize_price: number;
   can_nationalize: boolean;
   nationalize_cost: number;
+}
+
+export interface GoodInfoSnapshot {
+  id: string;
+  name: string;
+  unit_volume: number;
+  retention_permille: number;
+  transport_channel: TransportChannel;
+  genesis_price_cents: number;
+  is_flow: boolean;
+}
+
+export interface SectorGoodBookSnapshot {
+  good_id: string;
+  good_name: string;
+  depot_stock: number;
+  order_book: OrderBookSnapshot;
 }
 
 export interface SectorSnapshot {
@@ -217,6 +261,7 @@ export interface SectorSnapshot {
   apple_price_cents: number;
   ma_apple_price_cents: number;
   order_book: OrderBookSnapshot;
+  market_books: SectorGoodBookSnapshot[];
   wage_quotes: RoleWageSnapshot[];
   depot_apples: number;
   depot_capacity: number;
@@ -254,6 +299,12 @@ export interface BuildingSnapshot {
   role_jobs: Record<string, number>;
   tags: BuildingTagId[];
   required_tile_tags: TileTagId[];
+  forbidden_tile_tags: TileTagId[];
+  required_primary_tags: BuildingTagId[];
+  unique_planet_tags: BuildingTagId[];
+  unique_region_tags: BuildingTagId[];
+  unique_tile_tags: BuildingTagId[];
+  monthly_inputs: Record<string, number>;
   monthly_output: Record<string, number>;
 }
 
@@ -268,6 +319,7 @@ export interface PlacedBuildingSnapshot {
   jobs_filled: number;
   hosting_capacity: number;
   owner: BuildingOwnerSnapshot;
+  monthly_inputs: Record<string, number>;
   base_monthly_output: Record<string, number>;
   effective_monthly_output: Record<string, number>;
 }
@@ -285,6 +337,7 @@ export interface OccupiedTileSnapshot {
 export interface RegionSummarySnapshot {
   region_id: number;
   sector_id: number | null;
+  claimed_land_tiles: number;
   population: number;
   monthly_growth: number;
   jobs_required: number;
@@ -303,6 +356,7 @@ export interface RegionSummarySnapshot {
 }
 
 export interface PlanetSnapshot {
+  scenario: ScenarioPreset;
   id: string;
   name: string;
   radius_km: number;
@@ -313,6 +367,9 @@ export interface PlanetSnapshot {
     seed: number;
   };
   polity: PolitySnapshot;
+  primary_staple_id: string;
+  primary_staple_name: string;
+  good_catalog: GoodInfoSnapshot[];
   pop_catalog: PopTypeSnapshot[];
   stockpile: Record<string, number>;
   resources: ResourceStockSnapshot[];
@@ -331,6 +388,7 @@ export interface PlanetSnapshot {
   sectors: SectorSnapshot[];
   enterprises: EnterpriseSnapshot[];
   region_summaries: RegionSummarySnapshot[];
+  tile_sectors: (number | null)[];
   occupied_tiles: OccupiedTileSnapshot[];
 }
 
@@ -379,6 +437,7 @@ export type StreamEvent =
   | { kind: 'tick'; time: TimeSnapshot }
   | { kind: 'planet_surface'; surface: PlanetSurfaceSnapshot | null }
   | { kind: 'planet_view'; planet: PlanetSnapshot | null }
+  | { kind: 'command_notice'; message: string }
   | { kind: 'command_error'; message: string };
 
 export interface GameStreamHandlers {
@@ -399,9 +458,21 @@ export interface GameStreamHandle {
   demolishOnTile: (planetId: string, tileIndex: number, slot: TileSlotKey) => Promise<void>;
   privatizeSlot: (planetId: string, tileIndex: number, slot: TileSlotKey) => Promise<void>;
   nationalizeSlot: (planetId: string, tileIndex: number, slot: TileSlotKey) => Promise<void>;
+  acquireBankruptSlot: (
+    planetId: string,
+    tileIndex: number,
+    slot: TileSlotKey,
+    buyerPolity?: number,
+  ) => Promise<void>;
+  resolvePendingEvent: (instanceId: number, optionIndex: number) => Promise<void>;
   togglePrivateLandUse: (planetId: string, sectorId: number, allow: boolean) => Promise<void>;
   setMonetaryPolicy: (planetId: string, policy: MonetaryPolicy) => Promise<void>;
   setDepotPolicy: (planetId: string, sectorId: number, policy: DepotPolicy) => Promise<void>;
+  setEarthGridPreset: (dense: boolean) => Promise<void>;
+  setScenarioPreset: (scenario: ScenarioPreset) => Promise<void>;
+  claimTile: (planetId: string, tileIndex: number) => Promise<void>;
+  claimRegionFrontier: (planetId: string, regionId: number, maxCount?: number) => Promise<void>;
+  reloadData: (restartWorld: boolean) => Promise<void>;
   close: () => void;
 }
 
@@ -464,6 +535,22 @@ function connectTauriStream(handlers: GameStreamHandlers): GameStreamHandle {
     async nationalizeSlot(planetId: string, tileIndex: number, slot: TileSlotKey) {
       await invoke('nationalize_slot', { planetId, tileIndex, slot });
     },
+    async acquireBankruptSlot(
+      planetId: string,
+      tileIndex: number,
+      slot: TileSlotKey,
+      buyerPolity?: number,
+    ) {
+      await invoke('acquire_bankrupt_slot', {
+        planetId,
+        tileIndex,
+        slot,
+        buyerPolity: buyerPolity ?? null,
+      });
+    },
+    async resolvePendingEvent(instanceId: number, optionIndex: number) {
+      await invoke('resolve_pending_event', { instanceId, optionIndex });
+    },
     async togglePrivateLandUse(planetId: string, sectorId: number, allow: boolean) {
       await invoke('toggle_private_land_use', { planetId, sectorId, allow });
     },
@@ -472,6 +559,21 @@ function connectTauriStream(handlers: GameStreamHandlers): GameStreamHandle {
     },
     async setDepotPolicy(planetId: string, sectorId: number, policy: DepotPolicy) {
       await invoke('set_depot_policy', { planetId, sectorId, policy });
+    },
+    async setEarthGridPreset(dense: boolean) {
+      await invoke('set_earth_grid_preset', { dense });
+    },
+    async setScenarioPreset(scenario: ScenarioPreset) {
+      await invoke('set_scenario_preset', { scenario });
+    },
+    async claimTile(planetId: string, tileIndex: number) {
+      await invoke('claim_tile', { planetId, tileIndex });
+    },
+    async claimRegionFrontier(planetId: string, regionId: number, maxCount = 5) {
+      await invoke('claim_region_frontier', { planetId, regionId, maxCount });
+    },
+    async reloadData(restartWorld: boolean) {
+      await invoke('reload_game_data', { restartWorld });
     },
     close() {
       closed = true;
@@ -606,6 +708,33 @@ function connectWebSocketStream(handlers: GameStreamHandlers): GameStreamHandle 
         '赎买国有化',
       );
     },
+    async acquireBankruptSlot(
+      planetId: string,
+      tileIndex: number,
+      slot: TileSlotKey,
+      buyerPolity?: number,
+    ) {
+      sendJson(
+        {
+          cmd: 'acquire_bankrupt_slot',
+          planet_id: planetId,
+          tile_index: tileIndex,
+          slot,
+          buyer_polity: buyerPolity ?? null,
+        },
+        '破产残值收购',
+      );
+    },
+    async resolvePendingEvent(instanceId: number, optionIndex: number) {
+      sendJson(
+        {
+          cmd: 'resolve_pending_event',
+          instance_id: instanceId,
+          option_index: optionIndex,
+        },
+        '处理待决事件',
+      );
+    },
     async togglePrivateLandUse(planetId: string, sectorId: number, allow: boolean) {
       sendJson(
         {
@@ -625,6 +754,32 @@ function connectWebSocketStream(handlers: GameStreamHandlers): GameStreamHandle 
         { cmd: 'set_depot_policy', planet_id: planetId, sector_id: sectorId, policy },
         '调整官仓政策',
       );
+    },
+    async setEarthGridPreset(dense: boolean) {
+      sendJson({ cmd: 'set_earth_grid_preset', dense }, '切换地球网格精细度');
+    },
+    async setScenarioPreset(scenario: ScenarioPreset) {
+      sendJson({ cmd: 'set_scenario_preset', scenario }, '切换开局剧本');
+    },
+    async claimTile(planetId: string, tileIndex: number) {
+      sendJson(
+        { cmd: 'claim_tile', planet_id: planetId, tile_index: tileIndex },
+        '框入荒野地块',
+      );
+    },
+    async claimRegionFrontier(planetId: string, regionId: number, maxCount = 5) {
+      sendJson(
+        {
+          cmd: 'claim_region_frontier',
+          planet_id: planetId,
+          region_id: regionId,
+          max_count: maxCount,
+        },
+        '批量框入荒野地块',
+      );
+    },
+    async reloadData(restartWorld: boolean) {
+      sendJson({ cmd: 'reload_data', restart_world: restartWorld }, '热重载外部数据');
     },
     close() {
       closedByClient = true;
@@ -710,6 +865,16 @@ function isBuildingSnapshot(value: unknown): value is BuildingSnapshot {
     && Array.isArray(b.tags)
     && b.tags.every(isBuildingTagId)
     && isTagList(b.required_tile_tags)
+    && isTagList(b.forbidden_tile_tags)
+    && Array.isArray(b.required_primary_tags)
+    && b.required_primary_tags.every(isBuildingTagId)
+    && Array.isArray(b.unique_planet_tags)
+    && b.unique_planet_tags.every(isBuildingTagId)
+    && Array.isArray(b.unique_region_tags)
+    && b.unique_region_tags.every(isBuildingTagId)
+    && Array.isArray(b.unique_tile_tags)
+    && b.unique_tile_tags.every(isBuildingTagId)
+    && isIntMap(b.monthly_inputs)
     && isIntMap(b.monthly_output)
   );
 }
@@ -729,6 +894,7 @@ function isPlacedBuildingSnapshot(value: unknown): value is PlacedBuildingSnapsh
     && typeof b.jobs_filled === 'number' && Number.isInteger(b.jobs_filled)
     && typeof b.hosting_capacity === 'number'
     && isOwnerSnapshot(b.owner)
+    && isIntMap(b.monthly_inputs)
     && isIntMap(b.base_monthly_output)
     && isIntMap(b.effective_monthly_output)
   );
@@ -769,12 +935,17 @@ function isOccupiedTileSnapshot(value: unknown): value is OccupiedTileSnapshot {
   );
 }
 
+function isScenarioPreset(value: unknown): value is ScenarioPreset {
+  return value === 'earth' || value === 'colony';
+}
+
 function isRegionSummary(value: unknown): value is RegionSummarySnapshot {
   if (!value || typeof value !== 'object') return false;
   const r = value as Partial<RegionSummarySnapshot>;
   return (
     typeof r.region_id === 'number'
     && (r.sector_id === null || typeof r.sector_id === 'number')
+    && typeof r.claimed_land_tiles === 'number'
     && typeof r.population === 'number' && Number.isInteger(r.population)
     && typeof r.monthly_growth === 'number' && Number.isInteger(r.monthly_growth)
     && typeof r.jobs_required === 'number' && Number.isInteger(r.jobs_required)
@@ -800,6 +971,8 @@ function isPolitySnapshot(value: unknown): value is PolitySnapshot {
     typeof p.id === 'number'
     && typeof p.name === 'string'
     && typeof p.treasury === 'number'
+    && typeof p.admin_used === 'number'
+    && typeof p.admin_capacity === 'number'
     && typeof p.monetary_policy === 'string'
     && typeof p.tax_rate_percent === 'number'
     && typeof p.last_net_cashflow === 'number'
@@ -821,6 +994,7 @@ function isSectorSnapshot(value: unknown): value is SectorSnapshot {
     && !!s.order_book
     && Array.isArray(s.order_book.asks)
     && Array.isArray(s.order_book.bids)
+    && Array.isArray(s.market_books)
     && Array.isArray(s.wage_quotes)
     && Array.isArray(s.pops)
   );
@@ -830,7 +1004,8 @@ function isTimeSnapshot(value: unknown): value is TimeSnapshot {
   if (!value || typeof value !== 'object') return false;
   const time = value as Partial<TimeSnapshot>;
   return (
-    typeof time.epoch_name === 'string'
+    isScenarioPreset(time.scenario)
+    && typeof time.epoch_name === 'string'
     && typeof time.year === 'number' && Number.isInteger(time.year) && time.year !== 0
     && typeof time.month === 'number' && Number.isInteger(time.month) && time.month >= 1 && time.month <= 12
     && typeof time.day === 'number' && Number.isInteger(time.day) && time.day >= 1 && time.day <= 30
@@ -846,7 +1021,8 @@ function isPlanetSnapshot(value: unknown): value is PlanetSnapshot {
   if (!value || typeof value !== 'object') return false;
   const planet = value as Partial<PlanetSnapshot>;
   return (
-    typeof planet.id === 'string'
+    isScenarioPreset(planet.scenario)
+    && typeof planet.id === 'string'
     && typeof planet.name === 'string'
     && typeof planet.radius_km === 'number' && Number.isFinite(planet.radius_km) && planet.radius_km > 0
     && typeof planet.position?.x === 'number' && Number.isFinite(planet.position.x)
@@ -855,6 +1031,9 @@ function isPlanetSnapshot(value: unknown): value is PlanetSnapshot {
     && isRgbTuple(planet.appearance?.land_rgb)
     && typeof planet.appearance?.seed === 'number' && Number.isInteger(planet.appearance.seed)
     && isPolitySnapshot(planet.polity)
+    && typeof planet.primary_staple_id === 'string'
+    && typeof planet.primary_staple_name === 'string'
+    && Array.isArray(planet.good_catalog)
     && Array.isArray(planet.pop_catalog)
     && isIntMap(planet.stockpile)
     && Array.isArray(planet.resources) && planet.resources.every(isResourceStock)
@@ -873,6 +1052,8 @@ function isPlanetSnapshot(value: unknown): value is PlanetSnapshot {
     && Array.isArray(planet.sectors) && planet.sectors.every(isSectorSnapshot)
     && Array.isArray(planet.enterprises)
     && Array.isArray(planet.region_summaries) && planet.region_summaries.every(isRegionSummary)
+    && Array.isArray(planet.tile_sectors)
+    && planet.tile_sectors.every((s) => s === null || (typeof s === 'number' && Number.isInteger(s)))
     && Array.isArray(planet.occupied_tiles) && planet.occupied_tiles.every(isOccupiedTileSnapshot)
   );
 }
@@ -947,6 +1128,9 @@ function isStreamEvent(value: unknown): value is StreamEvent {
   }
   if (event.kind === 'planet_view') {
     return event.planet === null || isPlanetSnapshot(event.planet);
+  }
+  if (event.kind === 'command_notice') {
+    return typeof event.message === 'string';
   }
   if (event.kind === 'command_error') {
     return typeof event.message === 'string';

@@ -16,9 +16,16 @@ use std::collections::{BinaryHeap, HashMap, VecDeque};
 pub const SURFACE_WIDTH: f32 = 1200.0;
 pub const SURFACE_HEIGHT: f32 = 640.0;
 pub const DEFAULT_GRID_CELLS: usize = 1000;
+pub const DETAILED_GRID_CELLS: usize = 1800;
 pub const DEFAULT_LAND_REGIONS: usize = 12;
+pub const EARTH_LAND_REGIONS: usize = 13;
 pub const DEFAULT_OCEAN_REGIONS: usize = 4;
 pub const SEA_LEVEL: u8 = 20;
+
+#[inline]
+pub fn is_earth_planet(planet_id: &str) -> bool {
+    planet_id == "base:earth"
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -35,10 +42,11 @@ pub enum TileTag {
     Forest = 9,
     Arid = 10,
     Tundra = 11,
+    CoreSite = 12,
 }
 
 impl TileTag {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Land,
         Self::Sea,
         Self::Coastal,
@@ -51,6 +59,7 @@ impl TileTag {
         Self::Forest,
         Self::Arid,
         Self::Tundra,
+        Self::CoreSite,
     ];
 
     #[inline]
@@ -72,6 +81,7 @@ impl TileTag {
             Self::Forest => "forest",
             Self::Arid => "arid",
             Self::Tundra => "tundra",
+            Self::CoreSite => "core_site",
         }
     }
 
@@ -89,6 +99,7 @@ impl TileTag {
             "forest" => Some(Self::Forest),
             "arid" => Some(Self::Arid),
             "tundra" => Some(Self::Tundra),
+            "core_site" => Some(Self::CoreSite),
             _ => None,
         }
     }
@@ -107,6 +118,7 @@ impl TileTag {
             Self::Forest => "树林",
             Self::Arid => "荒漠",
             Self::Tundra => "冻土",
+            Self::CoreSite => "中心选址",
         }
     }
 }
@@ -413,6 +425,41 @@ fn ridged_fbm(seed: u64, mut x: f64, mut y: f64, octaves: u32) -> f64 {
     sum / norm
 }
 
+fn cyl_fbm(seed: u64, nx: f64, y: f64, freq_x: f64, freq_y: f64, octaves: u32) -> f64 {
+    let angle = nx * std::f64::consts::TAU;
+    let r = freq_x / std::f64::consts::TAU;
+    let cx = angle.cos() * r;
+    let sx = angle.sin() * r;
+    // Project cylinder `(cx, sx, y * freq_y)` onto an tilted 2D plane without seam at `nx = 0 / 1`.
+    let u = cx * 0.866_025_4 - sx * 0.5 + 17.3;
+    let v = y * freq_y + cx * 0.35 + sx * 0.61;
+    fbm(seed, u, v, octaves)
+}
+
+fn cyl_ridged_fbm(seed: u64, nx: f64, y: f64, freq_x: f64, freq_y: f64, octaves: u32) -> f64 {
+    let angle = nx * std::f64::consts::TAU;
+    let r = freq_x / std::f64::consts::TAU;
+    let cx = angle.cos() * r;
+    let sx = angle.sin() * r;
+    let u = cx * 0.8 - sx * 0.6 + 11.7;
+    let v = y * freq_y + cx * 0.42 + sx * 0.54;
+    ridged_fbm(seed, u, v, octaves)
+}
+
+#[inline]
+fn cyl_dx_f64(a: f64, b: f64, width: f64) -> f64 {
+    let d = (a - b).abs();
+    d.min(width - d)
+}
+
+#[inline]
+fn cyl_dist2_f32(a: [f32; 2], b: [f32; 2], width: f32) -> f32 {
+    let raw_dx = (a[0] - b[0]).abs();
+    let dx = raw_dx.min(width - raw_dx);
+    let dy = a[1] - b[1];
+    dx * dx + dy * dy
+}
+
 struct VoronoiDiagram {
     points_n: usize,
     all_points: Vec<[f64; 2]>,
@@ -445,27 +492,24 @@ fn circumcenter(
     let ux = (ad * (by - cy) + bd * (cy - ay) + cd * (ay - by)) / d;
     let uy = (ad * (cx - bx) + bd * (ax - cx) + cd * (bx - ax)) / d;
     [
-        ux.clamp(-margin, width + margin),
+        ux.clamp(-width - margin, 2.0 * width + margin),
         uy.clamp(-margin, height + margin),
     ]
 }
 
+/// Polar-only boundary points (`y = -offset` and `y = height + offset`) spanning `[-width, 2 * width]`
+/// so the horizontal direction `x` wraps periodically across `0 <-> width` with zero vertical wall!
 fn build_boundary_points(width: f64, height: f64, spacing: f64) -> Vec<[f64; 2]> {
     let step = (spacing * 1.6).max(20.0);
     let offset = spacing * 1.15;
-    let nx = ((width + 2.0 * offset) / step).ceil() as usize;
-    let ny = ((height + 2.0 * offset) / step).ceil() as usize;
-    let mut boundary = Vec::with_capacity((nx + ny) * 2 + 4);
+    let span_w = 3.0 * width + 2.0 * offset;
+    let nx = (span_w / step).ceil() as usize;
+    let mut boundary = Vec::with_capacity((nx + 1) * 2);
 
     for i in 0..=nx {
-        let x = -offset + (i as f64 / nx as f64) * (width + 2.0 * offset);
+        let x = -width - offset + (i as f64 / nx as f64) * span_w;
         boundary.push([x, -offset]);
         boundary.push([x, height + offset]);
-    }
-    for j in 1..ny {
-        let y = -offset + (j as f64 / ny as f64) * (height + 2.0 * offset);
-        boundary.push([-offset, y]);
-        boundary.push([width + offset, y]);
     }
     boundary
 }
@@ -478,8 +522,19 @@ fn compute_voronoi(
     clamp_margin: f64,
 ) -> VoronoiDiagram {
     let points_n = points.len();
-    let mut all_points = Vec::with_capacity(points_n + boundary.len());
+    let periodic_n = points_n * 3;
+    let mut all_points = Vec::with_capacity(periodic_n + boundary.len());
+    // Sheet 0 (`0..points_n`): primary `[0, width)`
     all_points.extend_from_slice(points);
+    // Sheet 1 (`points_n..2*points_n`): left periodic ghost `[-width, 0)`
+    for &[x, y] in points {
+        all_points.push([x - width, y]);
+    }
+    // Sheet 2 (`2*points_n..3*points_n`): right periodic ghost `[width, 2*width)`
+    for &[x, y] in points {
+        all_points.push([x + width, y]);
+    }
+    // Polar cap sentinel points (`>= 3*points_n`)
     all_points.extend_from_slice(boundary);
 
     let dpoints: Vec<DPoint> = all_points
@@ -517,8 +572,11 @@ fn compute_voronoi(
         for _ in 0..48 {
             verts.push(incoming / 3);
             let neighbor = tri.triangles[incoming];
-            if neighbor < points_n {
-                neibs.push(neighbor);
+            if neighbor < periodic_n {
+                let canon = neighbor % points_n;
+                if canon != p && !neibs.contains(&canon) {
+                    neibs.push(canon);
+                }
             } else {
                 touches_border = true;
             }
@@ -550,9 +608,9 @@ fn compute_voronoi(
     }
 }
 
-/// Sutherland-Hodgman polygon clipper against `[0, width] x [0, height]` so outer sea cells
-/// form flush rectangular borders with zero overhang or gaps.
-fn clip_polygon_to_box(poly: &[[f64; 2]], width: f64, height: f64) -> Vec<[f64; 2]> {
+/// Vertical-only Sutherland-Hodgman clipper against `y in [0, height]`.
+/// Horizontal `x` is deliberately left unclipped so periodic Voronoi cells tile seamlessly across `0 <-> width`!
+fn clip_polygon_to_strip(poly: &[[f64; 2]], height: f64) -> Vec<[f64; 2]> {
     fn clip_edge<F, I>(pts: &[[f64; 2]], inside: F, intersect: I) -> Vec<[f64; 2]>
     where
         F: Fn([f64; 2]) -> bool,
@@ -582,22 +640,6 @@ fn clip_polygon_to_box(poly: &[[f64; 2]], width: f64, height: f64) -> Vec<[f64; 
 
     let p1 = clip_edge(
         poly,
-        |p| p[0] >= 0.0,
-        |a, b| {
-            let t = (0.0 - a[0]) / (b[0] - a[0]);
-            [0.0, a[1] + t * (b[1] - a[1])]
-        },
-    );
-    let p2 = clip_edge(
-        &p1,
-        |p| p[0] <= width,
-        |a, b| {
-            let t = (width - a[0]) / (b[0] - a[0]);
-            [width, a[1] + t * (b[1] - a[1])]
-        },
-    );
-    let p3 = clip_edge(
-        &p2,
         |p| p[1] >= 0.0,
         |a, b| {
             let t = (0.0 - a[1]) / (b[1] - a[1]);
@@ -605,7 +647,7 @@ fn clip_polygon_to_box(poly: &[[f64; 2]], width: f64, height: f64) -> Vec<[f64; 
         },
     );
     clip_edge(
-        &p3,
+        &p1,
         |p| p[1] <= height,
         |a, b| {
             let t = (height - a[1]) / (b[1] - a[1]);
@@ -635,6 +677,434 @@ fn polygon_centroid_pts(pts: &[[f64; 2]], fallback: [f64; 2]) -> [f64; 2] {
     [cx / (3.0 * area2), cy / (3.0 * area2)]
 }
 
+#[derive(Deserialize)]
+struct AuthoredEarthRegionDef {
+    id: u16,
+    name: String,
+    is_ocean: bool,
+    color_rgb: [u8; 3],
+}
+
+#[derive(Deserialize)]
+pub(crate) struct AuthoredEarthMap {
+    capital_index: usize,
+    regions: Vec<AuthoredEarthRegionDef>,
+    /// Each row: `[x, y, elevation, region_id, relief_code, biome_code, deep_hint]`
+    cells: Vec<[f64; 7]>,
+}
+
+static EARTH_MAP_CACHE: std::sync::RwLock<Option<std::sync::Arc<AuthoredEarthMap>>> =
+    std::sync::RwLock::new(None);
+
+pub fn reload_earth_map_from_dir(dir: &std::path::Path) -> Result<(), String> {
+    let map_path = dir.join("maps/earth_authored.json");
+    let raw = std::fs::read_to_string(&map_path)
+        .map_err(|e| format!("读取地球地图 {} 失败：{e}", map_path.display()))?;
+    let parsed: AuthoredEarthMap =
+        crate::data_bundle::parse_jsonc_named("maps/earth_authored.json", &raw)?;
+    if parsed.cells.is_empty() || parsed.regions.is_empty() {
+        return Err("文件 maps/earth_authored.json 单元格或大区列表不能为空。".into());
+    }
+    if parsed.capital_index >= parsed.cells.len() {
+        return Err(format!(
+            "文件 maps/earth_authored.json 的 capital_index ({}) 超出单元格总数 ({})",
+            parsed.capital_index,
+            parsed.cells.len()
+        ));
+    }
+    if let Ok(mut guard) = EARTH_MAP_CACHE.write() {
+        *guard = Some(std::sync::Arc::new(parsed));
+    }
+    Ok(())
+}
+
+fn authored_earth_map() -> std::sync::Arc<AuthoredEarthMap> {
+    if let Ok(guard) = EARTH_MAP_CACHE.read() {
+        if let Some(arc) = guard.as_ref() {
+            return std::sync::Arc::clone(arc);
+        }
+    }
+    let dir = crate::data_bundle::resolve_gamedata_dir().expect("查找外部 gamedata 目录失败");
+    reload_earth_map_from_dir(&dir).expect("加载 gamedata/maps/earth_authored.json 失败");
+    EARTH_MAP_CACHE
+        .read()
+        .expect("读取地球地图缓存失败")
+        .as_ref()
+        .cloned()
+        .expect("地球地图缓存为空")
+}
+
+fn generate_authored_earth_surface(planet_id: &str, seed: u32) -> PlanetSurfaceSnapshot {
+    let authored = authored_earth_map();
+    let width = f64::from(SURFACE_WIDTH);
+    let height = f64::from(SURFACE_HEIGHT);
+    let tile_count = authored.cells.len();
+
+    let mut packed_points = Vec::with_capacity(tile_count);
+    let mut packed_heights = Vec::with_capacity(tile_count);
+    for row in &authored.cells {
+        packed_points.push([
+            row[0].rem_euclid(width),
+            row[1].clamp(3.0, height - 3.0),
+        ]);
+        packed_heights.push(row[2].round().clamp(0.0, 255.0) as u8);
+    }
+
+    let boundary = build_boundary_points(width, height, 30.0);
+    let pack_vor = compute_voronoi(&packed_points, &boundary, width, height, 68.0);
+
+    let is_water: Vec<bool> = packed_heights.iter().map(|&h| h < SEA_LEVEL).collect();
+    let is_lake_flag: Vec<bool> = authored
+        .cells
+        .iter()
+        .enumerate()
+        .map(|(i, row)| is_water[i] && (row[4].round() as i32) == 1)
+        .collect();
+
+    let mut pack_is_ocean = vec![false; tile_count];
+    let mut oq = VecDeque::new();
+    for i in 0..tile_count {
+        if is_water[i]
+            && !is_lake_flag[i]
+            && (pack_vor.cell_border[i]
+                || packed_points[i][1] < 24.0
+                || packed_points[i][1] > height - 24.0)
+        {
+            pack_is_ocean[i] = true;
+            oq.push_back(i);
+        }
+    }
+    if oq.is_empty() {
+        if let Some(first) = (0..tile_count).find(|&i| is_water[i] && !is_lake_flag[i]) {
+            pack_is_ocean[first] = true;
+            oq.push_back(first);
+        }
+    }
+    while let Some(cur) = oq.pop_front() {
+        for &nb in &pack_vor.cell_neighbors[cur] {
+            if is_water[nb] && !is_lake_flag[nb] && !pack_is_ocean[nb] {
+                pack_is_ocean[nb] = true;
+                oq.push_back(nb);
+            }
+        }
+    }
+
+    let mut is_coastal_land = vec![false; tile_count];
+    let mut is_coastal_sea = vec![false; tile_count];
+    for i in 0..tile_count {
+        if !is_water[i] {
+            is_coastal_land[i] = pack_vor.cell_neighbors[i].iter().any(|&nb| is_water[nb]);
+        } else if !pack_is_ocean[i] {
+            is_coastal_sea[i] = true;
+        } else if pack_vor.cell_neighbors[i].iter().any(|&nb| !is_water[nb]) {
+            is_coastal_sea[i] = true;
+        }
+    }
+    let sea_ring1 = is_coastal_sea.clone();
+    for i in 0..tile_count {
+        let deep_hint = (authored.cells[i][6].round() as i32) != 0;
+        if is_water[i] && !is_coastal_sea[i] && !deep_hint {
+            if pack_vor.cell_neighbors[i].iter().any(|&nb| sea_ring1[nb]) {
+                is_coastal_sea[i] = true;
+            }
+        }
+    }
+
+    let mut centers = Vec::with_capacity(tile_count);
+    let mut polygons = Vec::with_capacity(tile_count);
+    let mut neighbors = Vec::with_capacity(tile_count);
+    let mut tile_tags = Vec::with_capacity(tile_count);
+    let mut land_tile_count = 0usize;
+    let mut coastal_sea_count = 0usize;
+    let mut deep_ocean_count = 0usize;
+
+    for p in 0..tile_count {
+        let raw_poly: Vec<[f64; 2]> = pack_vor.cell_vertices[p]
+            .iter()
+            .map(|&vid| pack_vor.vertices[vid])
+            .collect();
+        let clipped = clip_polygon_to_strip(&raw_poly, height);
+        let raw_c = polygon_centroid_pts(&clipped, pack_vor.all_points[p]);
+        let shift_x = if raw_c[0] < 0.0 {
+            width
+        } else if raw_c[0] >= width {
+            -width
+        } else {
+            0.0
+        };
+        let c = [(raw_c[0] + shift_x).rem_euclid(width), raw_c[1]];
+        centers.push([round1(c[0]), round1(c[1])]);
+
+        let poly: Vec<[f32; 2]> = clipped
+            .into_iter()
+            .map(|pt| [round1(pt[0] + shift_x), round1(pt[1])])
+            .collect();
+        polygons.push(poly);
+
+        let mut nbs: Vec<u16> = pack_vor.cell_neighbors[p]
+            .iter()
+            .map(|&nb| nb as u16)
+            .collect();
+        nbs.sort_unstable();
+        nbs.dedup();
+        neighbors.push(nbs);
+
+        let tags = if !is_water[p] {
+            land_tile_count += 1;
+            let rel = authored.cells[p][4].round() as i32;
+            let bio = authored.cells[p][5].round() as i32;
+            let mut t = TileTags::EMPTY.with(TileTag::Land);
+            if is_coastal_land[p] {
+                t = t.with(TileTag::Coastal);
+            }
+            t = match rel {
+                2 => t.with(TileTag::Mountains),
+                1 => t.with(TileTag::Hills),
+                _ => t.with(TileTag::Plains),
+            };
+            match bio {
+                1 if rel != 2 => t = t.with(TileTag::Forest),
+                2 if rel != 2 => t = t.with(TileTag::Arid),
+                3 => t = t.with(TileTag::Tundra),
+                _ => {}
+            }
+            t
+        } else {
+            let mut wt = TileTags::EMPTY.with(TileTag::Sea);
+            if !pack_is_ocean[p] {
+                coastal_sea_count += 1;
+                wt = wt.with(TileTag::InlandSea).with(TileTag::CoastalSea);
+            } else if is_coastal_sea[p] {
+                coastal_sea_count += 1;
+                wt = wt.with(TileTag::CoastalSea);
+            } else {
+                deep_ocean_count += 1;
+                wt = wt.with(TileTag::DeepOcean);
+            }
+            wt
+        };
+        tile_tags.push(tags);
+    }
+
+    let ocean_ids: Vec<u16> = authored
+        .regions
+        .iter()
+        .filter(|r| r.is_ocean)
+        .map(|r| r.id)
+        .collect();
+    let land_ids: Vec<u16> = authored
+        .regions
+        .iter()
+        .filter(|r| !r.is_ocean)
+        .map(|r| r.id)
+        .collect();
+
+    let mut region_of = vec![u16::MAX; tile_count];
+    for p in 0..tile_count {
+        let raw_reg = authored.cells[p][3].round().max(0.0) as u16;
+        if !is_water[p] {
+            region_of[p] = if land_ids.contains(&raw_reg) {
+                raw_reg
+            } else {
+                land_ids.first().copied().unwrap_or(0)
+            };
+        } else if tile_tags[p].has(TileTag::DeepOcean) {
+            region_of[p] = if ocean_ids.contains(&raw_reg) {
+                raw_reg
+            } else {
+                ocean_ids.first().copied().unwrap_or(13)
+            };
+        }
+    }
+
+    let mut best_cost = vec![f32::INFINITY; tile_count];
+    let mut heap = BinaryHeap::new();
+    for p in 0..tile_count {
+        if !is_water[p] && tile_tags[p].has(TileTag::Coastal) {
+            let rid = region_of[p];
+            for &nb_u16 in &neighbors[p] {
+                let nb = usize::from(nb_u16);
+                if tile_tags[nb].has(TileTag::CoastalSea) {
+                    let dist = cyl_dist2_f32(centers[nb], centers[p], SURFACE_WIDTH).sqrt();
+                    if dist < best_cost[nb] {
+                        best_cost[nb] = dist;
+                        heap.push(DijkstraEntry {
+                            cost: dist,
+                            tile: nb,
+                            region_id: rid,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    while let Some(entry) = heap.pop() {
+        if region_of[entry.tile] != u16::MAX {
+            continue;
+        }
+        region_of[entry.tile] = entry.region_id;
+        for &nb_u16 in &neighbors[entry.tile] {
+            let nb = usize::from(nb_u16);
+            if tile_tags[nb].has(TileTag::CoastalSea) && region_of[nb] == u16::MAX {
+                let dist = cyl_dist2_f32(centers[nb], centers[entry.tile], SURFACE_WIDTH).sqrt();
+                let next_cost = entry.cost + dist;
+                if next_cost < best_cost[nb] {
+                    best_cost[nb] = next_cost;
+                    heap.push(DijkstraEntry {
+                        cost: next_cost,
+                        tile: nb,
+                        region_id: entry.region_id,
+                    });
+                }
+            }
+        }
+    }
+    for p in 0..tile_count {
+        if region_of[p] == u16::MAX {
+            let raw_reg = authored.cells[p][3].round().max(0.0) as u16;
+            region_of[p] = if land_ids.contains(&raw_reg) {
+                raw_reg
+            } else {
+                land_ids.first().copied().unwrap_or(0)
+            };
+        }
+    }
+
+    let mut regions = Vec::with_capacity(authored.regions.len());
+    for def in &authored.regions {
+        let all_members: Vec<usize> = (0..tile_count)
+            .filter(|&i| region_of[i] == def.id)
+            .collect();
+        let land_members: Vec<usize> = all_members
+            .iter()
+            .copied()
+            .filter(|&i| !is_water[i])
+            .collect();
+        let sea_count = all_members.len().saturating_sub(land_members.len());
+        let anchor_pool = if !land_members.is_empty() {
+            &land_members
+        } else {
+            &all_members
+        };
+        let center = if !anchor_pool.is_empty() {
+            let mut sum_cos = 0.0_f32;
+            let mut sum_sin = 0.0_f32;
+            let mut sum_y = 0.0_f32;
+            for &idx in anchor_pool {
+                let ang = (centers[idx][0] / SURFACE_WIDTH) * std::f32::consts::TAU;
+                sum_cos += ang.cos();
+                sum_sin += ang.sin();
+                sum_y += centers[idx][1];
+            }
+            let avg_x =
+                (sum_sin.atan2(sum_cos) / std::f32::consts::TAU).rem_euclid(1.0) * SURFACE_WIDTH;
+            let avg_y = sum_y / anchor_pool.len() as f32;
+            let avg_pt = [avg_x, avg_y];
+            let anchor_idx = anchor_pool
+                .iter()
+                .copied()
+                .min_by(|&a, &b| {
+                    let da = cyl_dist2_f32(centers[a], avg_pt, SURFACE_WIDTH)
+                        * if tile_tags[a].has(TileTag::Coastal) { 1.25 } else { 1.0 };
+                    let db = cyl_dist2_f32(centers[b], avg_pt, SURFACE_WIDTH)
+                        * if tile_tags[b].has(TileTag::Coastal) { 1.25 } else { 1.0 };
+                    da.partial_cmp(&db).unwrap_or(Ordering::Equal)
+                })
+                .unwrap_or(anchor_pool[0]);
+            centers[anchor_idx]
+        } else {
+            [SURFACE_WIDTH * 0.5, SURFACE_HEIGHT * 0.5]
+        };
+
+        regions.push(SurfaceRegion {
+            id: def.id,
+            name: def.name.clone(),
+            is_ocean: def.is_ocean,
+            color_rgb: def.color_rgb,
+            center,
+            tile_count: all_members.len() as u16,
+            land_tile_count: land_members.len() as u16,
+            sea_tile_count: sea_count as u16,
+        });
+    }
+
+    let periodic_n = tile_count * 3;
+    let mut region_borders = Vec::new();
+    for e in 0..pack_vor.triangles.len() {
+        let opp = pack_vor.halfedges[e];
+        if opp == EMPTY {
+            continue;
+        }
+        let p_raw = pack_vor.triangles[e];
+        let q_raw = pack_vor.triangles[next_halfedge(e)];
+        if p_raw >= tile_count || q_raw >= periodic_n {
+            continue;
+        }
+        if q_raw < tile_count && e > opp {
+            continue;
+        }
+        let p = p_raw;
+        let q = q_raw % tile_count;
+        if region_of[p] == region_of[q] {
+            continue;
+        }
+        let va = pack_vor.vertices[e / 3];
+        let vb = pack_vor.vertices[opp / 3];
+        let seg = [
+            [round1(va[0]), round1(va[1].clamp(0.0, height))],
+            [round1(vb[0]), round1(vb[1].clamp(0.0, height))],
+        ];
+        if !tile_tags[p].is_water() && !tile_tags[q].is_water() {
+            region_borders.push(seg);
+        }
+    }
+
+    let (land_loops, lake_loops) =
+        extract_shore_loops(&pack_vor, &packed_heights, &pack_is_ocean, SURFACE_WIDTH);
+    let shelf_loops = extract_shelf_loops(&pack_vor, &tile_tags, SURFACE_WIDTH);
+
+    mark_region_core_sites(
+        &regions,
+        &region_of,
+        &neighbors,
+        &centers,
+        &mut tile_tags,
+        SURFACE_WIDTH,
+        Some(authored.capital_index),
+    );
+
+    let tiles = (0..tile_count)
+        .map(|idx| SurfacePolygonTile {
+            index: idx as u16,
+            region_id: region_of[idx],
+            tags: tile_tags[idx],
+            elevation: packed_heights[idx],
+            habitability: tile_tags[idx].habitability_percent(),
+            center: centers[idx],
+            polygon: polygons[idx].clone(),
+            neighbors: neighbors[idx].clone(),
+        })
+        .collect();
+
+    PlanetSurfaceSnapshot {
+        planet_id: planet_id.to_string(),
+        seed,
+        width: SURFACE_WIDTH,
+        height: SURFACE_HEIGHT,
+        grid_cell_count: tile_count,
+        land_tile_count,
+        coastal_sea_count,
+        deep_ocean_count,
+        ocean_merged_count: 0,
+        regions,
+        tiles,
+        land_loops,
+        lake_loops,
+        shelf_loops,
+        region_borders,
+    }
+}
+
 #[derive(Clone, Copy)]
 struct PlateBlob {
     cx: f64,
@@ -646,17 +1116,17 @@ struct PlateBlob {
 
 fn build_continental_plates(rng: &mut SplitMix64) -> Vec<PlateBlob> {
     let anchors: [(f64, f64, f64, f64, f64); 6] = [
-        (0.22, 0.34, 0.13, 0.19, 0.92),
-        (0.28, 0.68, 0.10, 0.20, 0.86),
-        (0.53, 0.32, 0.15, 0.17, 0.94),
-        (0.55, 0.62, 0.11, 0.19, 0.88),
-        (0.73, 0.36, 0.16, 0.20, 0.98),
-        (0.81, 0.72, 0.09, 0.12, 0.78),
+        (0.16, 0.34, 0.13, 0.19, 0.92),
+        (0.23, 0.68, 0.10, 0.20, 0.86),
+        (0.50, 0.32, 0.15, 0.17, 0.94),
+        (0.53, 0.62, 0.11, 0.19, 0.88),
+        (0.78, 0.36, 0.16, 0.20, 0.98),
+        (0.86, 0.72, 0.09, 0.12, 0.78),
     ];
     anchors
         .into_iter()
         .map(|(bx, by, rx, ry, w)| PlateBlob {
-            cx: (bx + (rng.next_f64() - 0.5) * 0.08).clamp(0.14, 0.86),
+            cx: (bx + (rng.next_f64() - 0.5) * 0.08).rem_euclid(1.0),
             cy: (by + (rng.next_f64() - 0.5) * 0.09).clamp(0.18, 0.82),
             rx: rx * (0.85 + rng.next_f64() * 0.32),
             ry: ry * (0.85 + rng.next_f64() * 0.32),
@@ -673,31 +1143,37 @@ fn evaluate_raw_continental_score(
     width: f64,
     height: f64,
 ) -> (f64, f64) {
-    let nx = x / width;
+    let nx = (x / width).rem_euclid(1.0);
     let ny = y / height;
 
-    let edge_x = (nx / 0.08).min((1.0 - nx) / 0.08).clamp(0.0, 1.0);
+    // Polar ice-ocean margin at top/bottom + narrow Bering-like date-line channel around `nx = 0 / 1`
+    // so continents reach close to both sides of the seam (`~2..3` water tiles apart) while keeping closed rings!
+    let edge_x = (nx / 0.038).min((1.0 - nx) / 0.038).clamp(0.0, 1.0);
     let edge_y = (ny / 0.095).min((1.0 - ny) / 0.095).clamp(0.0, 1.0);
-    let border_mask =
-        edge_x * edge_x * (3.0 - 2.0 * edge_x) * edge_y * edge_y * (3.0 - 2.0 * edge_y);
+    let date_line_gate = 0.28 + 0.72 * edge_x * edge_x * (3.0 - 2.0 * edge_x);
+    let polar_mask = edge_y * edge_y * (3.0 - 2.0 * edge_y);
 
-    let wx = nx * 4.4 + 0.32 * (fbm(seed ^ 0x1111_2222, nx * 3.1, ny * 3.1, 4) - 0.5);
-    let wy = ny * 2.6 + 0.32 * (fbm(seed ^ 0x3333_4444, nx * 3.1 + 5.2, ny * 3.1 - 3.4, 4) - 0.5);
+    let warp_x = 0.06 * (cyl_fbm(seed ^ 0x1111_2222, nx, ny, 3.1, 3.1, 4) - 0.5);
+    let warp_y = 0.08 * (cyl_fbm(seed ^ 0x3333_4444, nx, ny + 0.37, 3.1, 3.1, 4) - 0.5);
+    let wnx = (nx + warp_x).rem_euclid(1.0);
+    let wny = (ny + warp_y).clamp(0.0, 1.0);
 
     let mut plate_field = 0.0_f64;
     for plate in plates {
-        let dx = (nx + 0.05 * (wx - nx * 4.4) - plate.cx) / plate.rx;
-        let dy = (ny + 0.05 * (wy - ny * 2.6) - plate.cy) / plate.ry;
+        let raw_dx = (wnx - plate.cx).abs();
+        let dx = raw_dx.min(1.0 - raw_dx) / plate.rx;
+        let dy = (wny - plate.cy) / plate.ry;
         let d2 = dx * dx + dy * dy;
         let contrib = (1.0 - d2).max(0.0).powi(2) * plate.weight;
         plate_field = plate_field.max(contrib * 0.85) + contrib * 0.22;
     }
 
-    let detail = fbm(seed ^ 0x5555_6666, wx * 1.45, wy * 1.45, 5);
-    let archipelago = fbm(seed ^ 0x7777_8888, wx * 3.6, wy * 3.6, 3);
-    let ridge = ridged_fbm(seed ^ 0x9999_aaaa, wx * 1.9 + 2.1, wy * 1.9 - 1.7, 4);
+    let detail = cyl_fbm(seed ^ 0x5555_6666, wnx, wny, 6.2, 3.8, 5);
+    let archipelago = cyl_fbm(seed ^ 0x7777_8888, wnx, wny, 14.0, 9.0, 3);
+    let ridge = cyl_ridged_fbm(seed ^ 0x9999_aaaa, wnx, wny, 8.2, 4.9, 4);
 
-    let raw_land = (plate_field * 0.56 + detail * 0.52 + archipelago * 0.14) * border_mask;
+    let raw_land =
+        (plate_field * 0.56 + detail * 0.52 + archipelago * 0.14) * date_line_gate * polar_mask;
     (raw_land, ridge)
 }
 
@@ -759,31 +1235,37 @@ fn calibrate_sea_threshold(
 /// - Water: `-1` = 1st-ring coastal/lake shore, `-2` = 2nd-ring continental shelf / lake interior,
 ///   `-3..-10` = progressive deep ocean rings.
 /// Also returns `is_ocean` (true for border-connected global ocean, false for inland lakes/land).
-fn markup_distance_field(vor: &VoronoiDiagram, heights: &mut [u8]) -> (Vec<i8>, Vec<bool>) {
+fn markup_distance_field(
+    vor: &VoronoiDiagram,
+    heights: &mut [u8],
+    min_island_cells: usize,
+) -> (Vec<i8>, Vec<bool>) {
     let n = vor.points_n;
 
-    // 1. Clean isolated 1-cell land specks.
-    let mut visited = vec![false; n];
-    for start in 0..n {
-        if visited[start] || heights[start] < SEA_LEVEL {
-            continue;
-        }
-        let mut comp = Vec::new();
-        let mut q = VecDeque::new();
-        visited[start] = true;
-        q.push_back(start);
-        while let Some(cur) = q.pop_front() {
-            comp.push(cur);
-            for &nb in &vor.cell_neighbors[cur] {
-                if !visited[nb] && heights[nb] >= SEA_LEVEL {
-                    visited[nb] = true;
-                    q.push_back(nb);
+    // 1. Clean isolated tiny land specks (for procedural worlds `min_island_cells = 2`; for real Earth `1` keeps island nations!).
+    if min_island_cells > 1 {
+        let mut visited = vec![false; n];
+        for start in 0..n {
+            if visited[start] || heights[start] < SEA_LEVEL {
+                continue;
+            }
+            let mut comp = Vec::new();
+            let mut q = VecDeque::new();
+            visited[start] = true;
+            q.push_back(start);
+            while let Some(cur) = q.pop_front() {
+                comp.push(cur);
+                for &nb in &vor.cell_neighbors[cur] {
+                    if !visited[nb] && heights[nb] >= SEA_LEVEL {
+                        visited[nb] = true;
+                        q.push_back(nb);
+                    }
                 }
             }
-        }
-        if comp.len() < 2 {
-            for idx in comp {
-                heights[idx] = SEA_LEVEL - 3;
+            if comp.len() < min_island_cells {
+                for idx in comp {
+                    heights[idx] = SEA_LEVEL - 3;
+                }
             }
         }
     }
@@ -882,11 +1364,12 @@ fn classify_land_tags(
         tags = tags.with(TileTag::Coastal);
     }
 
+    let nx = (x / width).rem_euclid(1.0);
     let ny = y / height;
     let lat = (ny - 0.5).abs() * 2.0;
-    let temp_jitter = (fbm(seed ^ 0xabcd_1234, x / width * 5.0, ny * 5.0, 3) - 0.5) * 0.16;
+    let temp_jitter = (cyl_fbm(seed ^ 0xabcd_1234, nx, ny, 5.0, 5.0, 3) - 0.5) * 0.16;
     let polar_metric = lat + temp_jitter + (elevation.saturating_sub(20) as f64) * 0.004;
-    let moisture = fbm(seed ^ 0xdcba_4321, x / width * 4.8 + 7.1, ny * 4.8 - 2.3, 4);
+    let moisture = cyl_fbm(seed ^ 0xdcba_4321, nx, ny + 0.29, 4.8, 4.8, 4);
 
     if elevation >= 72 {
         tags = tags.with(TileTag::Mountains);
@@ -951,12 +1434,28 @@ fn trace_voronoi_cycles(vor: &VoronoiDiagram, adj: &HashMap<usize, usize>) -> Ve
     loops
 }
 
+fn keep_primary_sheet_loops(loops: Vec<Vec<[f32; 2]>>, width: f32) -> Vec<Vec<[f32; 2]>> {
+    loops
+        .into_iter()
+        .filter(|ring| {
+            if ring.is_empty() {
+                return false;
+            }
+            let sum_x: f32 = ring.iter().map(|p| p[0]).sum();
+            let avg_x = sum_x / (ring.len() as f32);
+            avg_x >= 0.0 && avg_x < width
+        })
+        .collect()
+}
+
 fn extract_shore_loops(
     vor: &VoronoiDiagram,
     heights: &[u8],
     is_ocean: &[bool],
+    width: f32,
 ) -> (Vec<Vec<[f32; 2]>>, Vec<Vec<[f32; 2]>>) {
     let n = vor.points_n;
+    let periodic_n = n * 3;
 
     let mut water_body: Vec<Option<usize>> = vec![None; n];
     for i in 0..n {
@@ -988,14 +1487,14 @@ fn extract_shore_loops(
     for e in 0..vor.triangles.len() {
         let p = vor.triangles[e];
         let q_pt = vor.triangles[next_halfedge(e)];
-        let p_is_land = p < n && heights[p] >= SEA_LEVEL;
+        let p_is_land = p < periodic_n && heights[p % n] >= SEA_LEVEL;
         if !p_is_land {
             continue;
         }
-        let q_body = if q_pt >= n {
+        let q_body = if q_pt >= periodic_n {
             Some(0)
-        } else if heights[q_pt] < SEA_LEVEL {
-            water_body[q_pt]
+        } else if heights[q_pt % n] < SEA_LEVEL {
+            water_body[q_pt % n]
         } else {
             None
         };
@@ -1007,25 +1506,26 @@ fn extract_shore_loops(
         edges_by_body[body_id].insert(e / 3, opp / 3);
     }
 
-    let land_loops = trace_voronoi_cycles(vor, &edges_by_body[0]);
+    let land_loops = keep_primary_sheet_loops(trace_voronoi_cycles(vor, &edges_by_body[0]), width);
     let mut lake_loops = Vec::new();
     for adj in edges_by_body.iter().skip(1) {
-        lake_loops.extend(trace_voronoi_cycles(vor, adj));
+        lake_loops.extend(keep_primary_sheet_loops(trace_voronoi_cycles(vor, adj), width));
     }
 
     (land_loops, lake_loops)
 }
 
-fn extract_shelf_loops(vor: &VoronoiDiagram, tile_tags: &[TileTags]) -> Vec<Vec<[f32; 2]>> {
+fn extract_shelf_loops(vor: &VoronoiDiagram, tile_tags: &[TileTags], width: f32) -> Vec<Vec<[f32; 2]>> {
     let n = vor.points_n;
+    let periodic_n = n * 3;
     let mut adj: HashMap<usize, usize> = HashMap::new();
     for e in 0..vor.triangles.len() {
         let p = vor.triangles[e];
         let q_pt = vor.triangles[next_halfedge(e)];
-        if p >= n || tile_tags[p].has(TileTag::DeepOcean) {
+        if p >= periodic_n || tile_tags[p % n].has(TileTag::DeepOcean) {
             continue;
         }
-        let q_is_deep = q_pt >= n || tile_tags[q_pt].has(TileTag::DeepOcean);
+        let q_is_deep = q_pt >= periodic_n || tile_tags[q_pt % n].has(TileTag::DeepOcean);
         if !q_is_deep {
             continue;
         }
@@ -1035,7 +1535,7 @@ fn extract_shelf_loops(vor: &VoronoiDiagram, tile_tags: &[TileTags]) -> Vec<Vec<
         }
         adj.insert(e / 3, opp / 3);
     }
-    trace_voronoi_cycles(vor, &adj)
+    keep_primary_sheet_loops(trace_voronoi_cycles(vor, &adj), width)
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -1253,10 +1753,7 @@ fn assign_all_regions(
                 }
                 let min_d2 = chosen
                     .iter()
-                    .map(|&s| {
-                        (centers[cand][0] - centers[s][0]).powi(2)
-                            + (centers[cand][1] - centers[s][1]).powi(2)
-                    })
+                    .map(|&s| cyl_dist2_f32(centers[cand], centers[s], width))
                     .fold(f32::INFINITY, f32::min);
                 let score = min_d2 * (0.7 + 0.3 * tile_tags[cand].habitability());
                 if score > best_score {
@@ -1290,9 +1787,7 @@ fn assign_all_regions(
             if tile_tags[nb].is_water() || region_of[nb] != u16::MAX {
                 continue;
             }
-            let dist = ((centers[nb][0] - centers[entry.tile][0]).powi(2)
-                + (centers[nb][1] - centers[entry.tile][1]).powi(2))
-            .sqrt();
+            let dist = cyl_dist2_f32(centers[nb], centers[entry.tile], width).sqrt();
             let next_cost = entry.cost + dist * tile_tags[nb].expansion_cost();
             if next_cost < best_cost[nb] {
                 best_cost[nb] = next_cost;
@@ -1314,10 +1809,8 @@ fn assign_all_regions(
     for &idx in &land_indices {
         if region_of[idx] == u16::MAX {
             if let Some(&nearest) = assigned_land.iter().min_by(|&&a, &&b| {
-                let da = (centers[idx][0] - centers[a][0]).powi(2)
-                    + (centers[idx][1] - centers[a][1]).powi(2);
-                let db = (centers[idx][0] - centers[b][0]).powi(2)
-                    + (centers[idx][1] - centers[b][1]).powi(2);
+                let da = cyl_dist2_f32(centers[idx], centers[a], width);
+                let db = cyl_dist2_f32(centers[idx], centers[b], width);
                 da.partial_cmp(&db).unwrap_or(Ordering::Equal)
             }) {
                 region_of[idx] = region_of[nearest];
@@ -1334,9 +1827,7 @@ fn assign_all_regions(
             for &nb_u16 in &neighbors[land_idx] {
                 let nb = nb_u16 as usize;
                 if tile_tags[nb].has(TileTag::CoastalSea) {
-                    let dist = ((centers[nb][0] - centers[land_idx][0]).powi(2)
-                        + (centers[nb][1] - centers[land_idx][1]).powi(2))
-                    .sqrt();
+                    let dist = cyl_dist2_f32(centers[nb], centers[land_idx], width).sqrt();
                     if dist < best_cost[nb] {
                         best_cost[nb] = dist;
                         heap.push(DijkstraEntry {
@@ -1357,9 +1848,7 @@ fn assign_all_regions(
         for &nb_u16 in &neighbors[entry.tile] {
             let nb = nb_u16 as usize;
             if tile_tags[nb].has(TileTag::CoastalSea) && region_of[nb] == u16::MAX {
-                let dist = ((centers[nb][0] - centers[entry.tile][0]).powi(2)
-                    + (centers[nb][1] - centers[entry.tile][1]).powi(2))
-                .sqrt();
+                let dist = cyl_dist2_f32(centers[nb], centers[entry.tile], width).sqrt();
                 let next_cost = entry.cost + dist;
                 if next_cost < best_cost[nb] {
                     best_cost[nb] = next_cost;
@@ -1378,10 +1867,8 @@ fn assign_all_regions(
                 .iter()
                 .copied()
                 .min_by(|&a, &b| {
-                    let da = (centers[idx][0] - centers[a][0]).powi(2)
-                        + (centers[idx][1] - centers[a][1]).powi(2);
-                    let db = (centers[idx][0] - centers[b][0]).powi(2)
-                        + (centers[idx][1] - centers[b][1]).powi(2);
+                    let da = cyl_dist2_f32(centers[idx], centers[a], width);
+                    let db = cyl_dist2_f32(centers[idx], centers[b], width);
                     da.partial_cmp(&db).unwrap_or(Ordering::Equal)
                 })
                 .unwrap_or(0);
@@ -1408,10 +1895,7 @@ fn assign_all_regions(
                 }
                 let min_d2 = ocean_seeds
                     .iter()
-                    .map(|&s| {
-                        (centers[cand][0] - centers[s][0]).powi(2)
-                            + (centers[cand][1] - centers[s][1]).powi(2)
-                    })
+                    .map(|&s| cyl_dist2_f32(centers[cand], centers[s], width))
                     .fold(f32::INFINITY, f32::min);
                 if min_d2 > best_d2 {
                     best_d2 = min_d2;
@@ -1438,9 +1922,7 @@ fn assign_all_regions(
             for &nb_u16 in &neighbors[entry.tile] {
                 let nb = nb_u16 as usize;
                 if tile_tags[nb].has(TileTag::DeepOcean) && region_of[nb] == u16::MAX {
-                    let dist = ((centers[nb][0] - centers[entry.tile][0]).powi(2)
-                        + (centers[nb][1] - centers[entry.tile][1]).powi(2))
-                    .sqrt();
+                    let dist = cyl_dist2_f32(centers[nb], centers[entry.tile], width).sqrt();
                     let next_cost = entry.cost + dist;
                     if next_cost < best_cost[nb] {
                         best_cost[nb] = next_cost;
@@ -1459,10 +1941,8 @@ fn assign_all_regions(
                     .min_by(|&a, &b| {
                         let sa = ocean_seeds[a];
                         let sb = ocean_seeds[b];
-                        let da = (centers[idx][0] - centers[sa][0]).powi(2)
-                            + (centers[idx][1] - centers[sa][1]).powi(2);
-                        let db = (centers[idx][0] - centers[sb][0]).powi(2)
-                            + (centers[idx][1] - centers[sb][1]).powi(2);
+                        let da = cyl_dist2_f32(centers[idx], centers[sa], width);
+                        let db = cyl_dist2_f32(centers[idx], centers[sb], width);
                         da.partial_cmp(&db).unwrap_or(Ordering::Equal)
                     })
                     .unwrap_or(0);
@@ -1496,18 +1976,25 @@ fn assign_all_regions(
             &all_members
         };
         let center = if !anchor_pool.is_empty() {
-            let (sx, sy) = anchor_pool.iter().fold((0.0_f32, 0.0_f32), |(ax, ay), &idx| {
-                (ax + centers[idx][0], ay + centers[idx][1])
-            });
-            let avg_x = sx / anchor_pool.len() as f32;
-            let avg_y = sy / anchor_pool.len() as f32;
+            let mut sum_cos = 0.0_f32;
+            let mut sum_sin = 0.0_f32;
+            let mut sum_y = 0.0_f32;
+            for &idx in anchor_pool {
+                let ang = (centers[idx][0] / width) * std::f32::consts::TAU;
+                sum_cos += ang.cos();
+                sum_sin += ang.sin();
+                sum_y += centers[idx][1];
+            }
+            let avg_x = (sum_sin.atan2(sum_cos) / std::f32::consts::TAU).rem_euclid(1.0) * width;
+            let avg_y = sum_y / anchor_pool.len() as f32;
+            let avg_pt = [avg_x, avg_y];
             let anchor_idx = anchor_pool
                 .iter()
                 .copied()
                 .min_by(|&a, &b| {
-                    let da = ((centers[a][0] - avg_x).powi(2) + (centers[a][1] - avg_y).powi(2))
+                    let da = cyl_dist2_f32(centers[a], avg_pt, width)
                         * if tile_tags[a].has(TileTag::Coastal) { 1.35 } else { 1.0 };
-                    let db = ((centers[b][0] - avg_x).powi(2) + (centers[b][1] - avg_y).powi(2))
+                    let db = cyl_dist2_f32(centers[b], avg_pt, width)
                         * if tile_tags[b].has(TileTag::Coastal) { 1.35 } else { 1.0 };
                     da.partial_cmp(&db).unwrap_or(Ordering::Equal)
                 })
@@ -1595,30 +2082,43 @@ fn assign_all_regions(
 }
 
 pub fn generate_planet_surface(planet_id: &str, seed: u32) -> PlanetSurfaceSnapshot {
+    generate_planet_surface_with_cells(planet_id, seed, DEFAULT_GRID_CELLS)
+}
+
+pub fn generate_planet_surface_with_cells(
+    planet_id: &str,
+    seed: u32,
+    target_grid_cells: usize,
+) -> PlanetSurfaceSnapshot {
+    if is_earth_planet(planet_id) {
+        return generate_authored_earth_surface(planet_id, seed);
+    }
+    let target_cells = target_grid_cells.clamp(300, 3200);
     let width = SURFACE_WIDTH as f64;
     let height = SURFACE_HEIGHT as f64;
     let seed64 = (seed as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ 0x4f1b_bcdd_a529_1073;
     let mut rng = SplitMix64::new(seed64);
 
-    // Step 1: ~1,000-cell jittered hexagonal lattice (`Grid`) + 1-pass centroid relaxation.
-    let spacing = ((width * height) / ((DEFAULT_GRID_CELLS as f64) * 0.866_025_4)).sqrt();
+    // Step 1: Horizontally periodic hexagonal lattice (`Grid`) + 1-pass centroid relaxation.
+    let raw_spacing = ((width * height) / ((target_cells as f64) * 0.866_025_4)).sqrt();
+    let cols_x = ((width / raw_spacing).round() as usize).max(8);
+    let spacing = width / (cols_x as f64);
     let dy = spacing * 0.866_025_4;
     let margin = spacing * 0.5;
-    let mut grid_points = Vec::with_capacity(DEFAULT_GRID_CELLS + 32);
+    let mut grid_points = Vec::with_capacity(target_cells + 32);
 
     let mut row = 0usize;
     let mut y = margin;
     while y <= height - margin {
         let x_offset = if row % 2 == 1 { spacing * 0.5 } else { 0.0 };
-        let mut x = margin + x_offset;
-        while x <= width - margin {
+        for col in 0..cols_x {
+            let x = (col as f64) * spacing + x_offset;
             let jx = (rng.next_f64() - 0.5) * spacing * 0.70;
             let jy = (rng.next_f64() - 0.5) * spacing * 0.70;
             grid_points.push([
-                (x + jx).clamp(margin * 0.55, width - margin * 0.55),
+                (x + jx).rem_euclid(width),
                 (y + jy).clamp(margin * 0.55, height - margin * 0.55),
             ]);
-            x += spacing;
         }
         y += dy;
         row += 1;
@@ -1634,7 +2134,7 @@ pub fn generate_planet_surface(planet_id: &str, seed: u32) -> PlanetSurfaceSnaps
                 .collect();
             let c = polygon_centroid_pts(&raw_poly, grid_points[i]);
             grid_points[i] = [
-                (grid_points[i][0] * 0.45 + c[0] * 0.55).clamp(margin * 0.55, width - margin * 0.55),
+                (grid_points[i][0] * 0.45 + c[0] * 0.55).rem_euclid(width),
                 (grid_points[i][1] * 0.45 + c[1] * 0.55).clamp(margin * 0.55, height - margin * 0.55),
             ];
         }
@@ -1643,7 +2143,7 @@ pub fn generate_planet_surface(planet_id: &str, seed: u32) -> PlanetSurfaceSnaps
     let grid_vor = compute_voronoi(&grid_points, &boundary, width, height, spacing * 1.4);
     let grid_cell_count = grid_vor.points_n;
 
-    // Step 2: Continental heightmap & signed coastal distance field (`markupGrid`).
+    // Step 2: Heightmap & signed coastal distance field (`markupGrid`).
     let plates = build_continental_plates(&mut rng);
     let sea_threshold = calibrate_sea_threshold(
         seed64,
@@ -1662,7 +2162,7 @@ pub fn generate_planet_surface(planet_id: &str, seed: u32) -> PlanetSurfaceSnaps
         height,
         sea_threshold,
     );
-    let (grid_t, _) = markup_distance_field(&grid_vor, &mut grid_heights);
+    let (grid_t, _) = markup_distance_field(&grid_vor, &mut grid_heights, 2);
 
     // Step 3: Graded `Pack / regraph` — fine coastal cells (`t = ±1`), medium shelf (`t = -2`),
     // and coarse relaxed deep-ocean polygons (`t <= -3`).
@@ -1682,9 +2182,11 @@ pub fn generate_planet_surface(planet_id: &str, seed: u32) -> PlanetSurfaceSnaps
         if h < SEA_LEVEL && tag <= -3 {
             // Coarse minimum-distance retention in deep ocean so open seas merge into broad, balanced polygons.
             let [px, py] = grid_points[i];
-            let too_close = kept_deep_pts
-                .iter()
-                .any(|&[qx, qy]| (px - qx).powi(2) + (py - qy).powi(2) < deep_min_dist2);
+            let too_close = kept_deep_pts.iter().any(|&[qx, qy]| {
+                let dx = cyl_dx_f64(px, qx, width);
+                let dy = py - qy;
+                dx * dx + dy * dy < deep_min_dist2
+            });
             if too_close {
                 ocean_merged_count += 1;
                 continue;
@@ -1708,11 +2210,18 @@ pub fn generate_planet_surface(planet_id: &str, seed: u32) -> PlanetSurfaceSnaps
                     continue;
                 }
                 let [nx, ny] = grid_points[nb];
-                let d2 = (px - nx).powi(2) + (py - ny).powi(2);
+                let mut adj_nx = nx;
+                if adj_nx - px > width * 0.5 {
+                    adj_nx -= width;
+                } else if px - adj_nx > width * 0.5 {
+                    adj_nx += width;
+                }
+                let d2 = (px - adj_nx).powi(2) + (py - ny).powi(2);
                 if d2 < split_dist2 {
                     continue;
                 }
-                let mx = (px + nx) * 0.5 + (rng.next_f64() - 0.5) * spacing * 0.08;
+                let mx = ((px + adj_nx) * 0.5 + (rng.next_f64() - 0.5) * spacing * 0.08)
+                    .rem_euclid(width);
                 let my = (py + ny) * 0.5 + (rng.next_f64() - 0.5) * spacing * 0.08;
                 let mid_h = ((h as u16 + grid_heights[nb] as u16) / 2) as u8;
                 packed_points.push([mx, my]);
@@ -1730,17 +2239,17 @@ pub fn generate_planet_surface(planet_id: &str, seed: u32) -> PlanetSurfaceSnaps
                 .iter()
                 .map(|&v| pre_pack_vor.vertices[v])
                 .collect();
-            let clipped = clip_polygon_to_box(&raw_poly, width, height);
+            let clipped = clip_polygon_to_strip(&raw_poly, height);
             let c = polygon_centroid_pts(&clipped, packed_points[p]);
             packed_points[p] = [
-                (packed_points[p][0] * 0.35 + c[0] * 0.65).clamp(spacing * 0.8, width - spacing * 0.8),
+                (packed_points[p][0] * 0.35 + c[0] * 0.65).rem_euclid(width),
                 (packed_points[p][1] * 0.35 + c[1] * 0.65).clamp(spacing * 0.8, height - spacing * 0.8),
             ];
         }
     }
 
     let pack_vor = compute_voronoi(&packed_points, &boundary, width, height, spacing * 2.2);
-    let (pack_t, pack_is_ocean) = markup_distance_field(&pack_vor, &mut packed_heights);
+    let (pack_t, pack_is_ocean) = markup_distance_field(&pack_vor, &mut packed_heights, 2);
 
     // Step 4: Every packed cell (land, coastal shelf, and deep ocean) becomes an interactive `Tile`.
     let tile_count = pack_vor.points_n;
@@ -1759,13 +2268,21 @@ pub fn generate_planet_surface(planet_id: &str, seed: u32) -> PlanetSurfaceSnaps
             .iter()
             .map(|&vid| pack_vor.vertices[vid])
             .collect();
-        let clipped = clip_polygon_to_box(&raw_poly, width, height);
-        let c = polygon_centroid_pts(&clipped, pack_vor.all_points[p]);
+        let clipped = clip_polygon_to_strip(&raw_poly, height);
+        let raw_c = polygon_centroid_pts(&clipped, pack_vor.all_points[p]);
+        let shift_x = if raw_c[0] < 0.0 {
+            width
+        } else if raw_c[0] >= width {
+            -width
+        } else {
+            0.0
+        };
+        let c = [(raw_c[0] + shift_x).rem_euclid(width), raw_c[1]];
         centers.push([round1(c[0]), round1(c[1])]);
 
         let poly: Vec<[f32; 2]> = clipped
             .into_iter()
-            .map(|pt| [round1(pt[0]), round1(pt[1])])
+            .map(|pt| [round1(pt[0] + shift_x), round1(pt[1])])
             .collect();
         polygons.push(poly);
 
@@ -1800,7 +2317,7 @@ pub fn generate_planet_surface(planet_id: &str, seed: u32) -> PlanetSurfaceSnaps
         tile_tags.push(tags);
     }
 
-    // Step 5: Assign regions (12 land macro-regions absorbing adjacent `CoastalSea`, plus 4 pelagic `DeepOcean` zones).
+    // Step 5: Assign regions on procedural worlds (12 land + 4 ocean).
     let (region_of, regions) = assign_all_regions(
         &centers,
         &neighbors,
@@ -1809,40 +2326,51 @@ pub fn generate_planet_surface(planet_id: &str, seed: u32) -> PlanetSurfaceSnaps
         SURFACE_HEIGHT,
     );
 
+    let periodic_n = tile_count * 3;
     let mut region_borders = Vec::new();
     for e in 0..pack_vor.triangles.len() {
         let opp = pack_vor.halfedges[e];
-        if opp == EMPTY || e > opp {
+        if opp == EMPTY {
             continue;
         }
-        let p = pack_vor.triangles[e];
-        let q = pack_vor.triangles[next_halfedge(e)];
-        if p >= tile_count || q >= tile_count {
+        let p_raw = pack_vor.triangles[e];
+        let q_raw = pack_vor.triangles[next_halfedge(e)];
+        if p_raw >= tile_count || q_raw >= periodic_n {
             continue;
         }
+        if q_raw < tile_count && e > opp {
+            continue;
+        }
+        let p = p_raw;
+        let q = q_raw % tile_count;
         if region_of[p] == region_of[q] {
             continue;
         }
         let va = pack_vor.vertices[e / 3];
         let vb = pack_vor.vertices[opp / 3];
         let seg = [
-            [
-                round1(va[0].clamp(0.0, width)),
-                round1(va[1].clamp(0.0, height)),
-            ],
-            [
-                round1(vb[0].clamp(0.0, width)),
-                round1(vb[1].clamp(0.0, height)),
-            ],
+            [round1(va[0]), round1(va[1].clamp(0.0, height))],
+            [round1(vb[0]), round1(vb[1].clamp(0.0, height))],
         ];
         if !tile_tags[p].is_water() && !tile_tags[q].is_water() {
             region_borders.push(seg);
         }
     }
 
-    // Step 6: Extract exact closed coastline, lake, and continental shelf contour loops.
-    let (land_loops, lake_loops) = extract_shore_loops(&pack_vor, &packed_heights, &pack_is_ocean);
-    let shelf_loops = extract_shelf_loops(&pack_vor, &tile_tags);
+    // Step 6: Extract exact closed coastline, lake, and continental shelf contour loops across cylinder.
+    let (land_loops, lake_loops) =
+        extract_shore_loops(&pack_vor, &packed_heights, &pack_is_ocean, SURFACE_WIDTH);
+    let shelf_loops = extract_shelf_loops(&pack_vor, &tile_tags, SURFACE_WIDTH);
+
+    mark_region_core_sites(
+        &regions,
+        &region_of,
+        &neighbors,
+        &centers,
+        &mut tile_tags,
+        SURFACE_WIDTH,
+        None,
+    );
 
     let tiles = (0..tile_count)
         .map(|idx| SurfacePolygonTile {
@@ -1878,14 +2406,51 @@ pub fn generate_planet_surface(planet_id: &str, seed: u32) -> PlanetSurfaceSnaps
 
 /// Generates only the lightweight simulation geography stored permanently in ECS.
 pub fn generate_sim_surface(planet_id: &str, seed: u32) -> GeneratedSimSurface {
-    let snapshot = generate_planet_surface(planet_id, seed);
-    let starter_tile_index = snapshot
-        .tiles
-        .iter()
-        .position(|t| t.tags.has(TileTag::Plains) && t.tags.has(TileTag::Coastal))
-        .or_else(|| snapshot.tiles.iter().position(|t| t.tags.has(TileTag::Plains)))
-        .or_else(|| snapshot.tiles.iter().position(|t| t.tags.has(TileTag::Land)))
-        .unwrap_or(0);
+    generate_sim_surface_with_cells(planet_id, seed, DEFAULT_GRID_CELLS)
+}
+
+pub fn generate_sim_surface_with_cells(
+    planet_id: &str,
+    seed: u32,
+    target_grid_cells: usize,
+) -> GeneratedSimSurface {
+    let snapshot = generate_planet_surface_with_cells(planet_id, seed, target_grid_cells);
+    let starter_tile_index = if is_earth_planet(planet_id) {
+        let cap = authored_earth_map().capital_index;
+        if cap < snapshot.tiles.len() && !snapshot.tiles[cap].tags.is_water() {
+            cap
+        } else {
+            snapshot
+                .tiles
+                .iter()
+                .position(|t| !t.tags.is_water() && t.region_id == 0)
+                .unwrap_or(0)
+        }
+    } else {
+        snapshot
+            .tiles
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.tags.has(TileTag::CoreSite) && !t.tags.is_water())
+            .max_by(|(ia, a), (ib, b)| {
+                let sa = a.tags.habitability_permille() as i32
+                    + if a.tags.has(TileTag::Coastal) { 180 } else { 0 }
+                    + if a.tags.has(TileTag::Plains) { 120 } else { 0 };
+                let sb = b.tags.habitability_permille() as i32
+                    + if b.tags.has(TileTag::Coastal) { 180 } else { 0 }
+                    + if b.tags.has(TileTag::Plains) { 120 } else { 0 };
+                sa.cmp(&sb).then_with(|| ib.cmp(ia))
+            })
+            .map(|(i, _)| i)
+            .or_else(|| {
+                snapshot
+                    .tiles
+                    .iter()
+                    .position(|t| t.tags.has(TileTag::Plains) && t.tags.has(TileTag::Coastal))
+            })
+            .or_else(|| snapshot.tiles.iter().position(|t| t.tags.has(TileTag::Land)))
+            .unwrap_or(0)
+    };
 
     let land_tile_count = snapshot.land_tile_count;
     let sea_tile_count = snapshot.coastal_sea_count + snapshot.deep_ocean_count;
@@ -1908,5 +2473,122 @@ pub fn generate_sim_surface(planet_id: &str, seed: u32) -> GeneratedSimSurface {
         land_tile_count,
         sea_tile_count,
         starter_tile_index,
+    }
+}
+
+/// Automatically marks 1~2 natural hub candidate tiles (`TileTag::CoreSite`) inside every land macro-region:
+/// - Prefers tiles deeply buffered away from land-region border seams (`border_hops >= 2`) and high in habitability;
+/// - Adds a second coastal harbor candidate (`TileTag::Coastal`) in larger coastal regions so players retain
+///   a meaningful choice between an inland heartland capital and a natural deepwater port without ever placing
+///   hubs flush against a region seam.
+fn mark_region_core_sites(
+    regions: &[SurfaceRegion],
+    region_of: &[u16],
+    neighbors: &[Vec<u16>],
+    centers: &[[f32; 2]],
+    tile_tags: &mut [TileTags],
+    width: f32,
+    forced_site: Option<usize>,
+) {
+    let tile_count = tile_tags.len();
+    let mut border_hops = vec![4u8; tile_count];
+    let mut q = VecDeque::new();
+    for i in 0..tile_count {
+        if tile_tags[i].is_water() {
+            border_hops[i] = 0;
+            continue;
+        }
+        let r = region_of[i];
+        let touches_other_land = neighbors[i].iter().any(|&nb_u16| {
+            let nb = usize::from(nb_u16);
+            nb < tile_count && !tile_tags[nb].is_water() && region_of[nb] != r
+        });
+        if touches_other_land {
+            border_hops[i] = 0;
+            q.push_back(i);
+        }
+    }
+    while let Some(cur) = q.pop_front() {
+        let next_d = border_hops[cur].saturating_add(1);
+        if next_d >= 4 {
+            continue;
+        }
+        let r = region_of[cur];
+        for &nb_u16 in &neighbors[cur] {
+            let nb = usize::from(nb_u16);
+            if nb < tile_count
+                && !tile_tags[nb].is_water()
+                && region_of[nb] == r
+                && border_hops[nb] > next_d
+            {
+                border_hops[nb] = next_d;
+                q.push_back(nb);
+            }
+        }
+    }
+
+    if let Some(f_idx) = forced_site {
+        if f_idx < tile_count && !tile_tags[f_idx].is_water() {
+            tile_tags[f_idx] = tile_tags[f_idx].with(TileTag::CoreSite);
+        }
+    }
+
+    for reg in regions {
+        if reg.is_ocean || reg.land_tile_count == 0 {
+            continue;
+        }
+        let members: Vec<usize> = (0..tile_count)
+            .filter(|&i| region_of[i] == reg.id && !tile_tags[i].is_water())
+            .collect();
+        if members.is_empty() {
+            continue;
+        }
+
+        // 1. Primary heartland candidate: strongly penalizes land-border seam (`hops == 0`), rewards interior buffer & habitability.
+        let best_heartland = members
+            .iter()
+            .copied()
+            .max_by(|&a, &b| {
+                let score_of = |idx: usize| -> f32 {
+                    let hops = border_hops[idx].min(3) as f32;
+                    let seam_bonus = if border_hops[idx] == 0 { -650.0 } else { hops * 280.0 };
+                    let hab = tile_tags[idx].habitability_permille() as f32;
+                    let dist = cyl_dist2_f32(centers[idx], reg.center, width).sqrt();
+                    seam_bonus + hab - dist * 1.15
+                };
+                score_of(a)
+                    .partial_cmp(&score_of(b))
+                    .unwrap_or(Ordering::Equal)
+                    .then_with(|| b.cmp(&a))
+            })
+            .unwrap_or(members[0]);
+        tile_tags[best_heartland] = tile_tags[best_heartland].with(TileTag::CoreSite);
+
+        // 2. Optional natural harbor candidate when heartland isn't coastal (or region is large enough for 2 sites).
+        if members.len() >= 5 {
+            let best_port = members
+                .iter()
+                .copied()
+                .filter(|&idx| {
+                    idx != best_heartland
+                        && tile_tags[idx].has(TileTag::Coastal)
+                        && !neighbors[best_heartland].contains(&(idx as u16))
+                        && (members.len() < 8 || border_hops[idx] > 0)
+                })
+                .max_by(|&a, &b| {
+                    let port_score = |idx: usize| -> f32 {
+                        let hops = border_hops[idx].min(3) as f32;
+                        let seam_bonus = if border_hops[idx] == 0 { -500.0 } else { hops * 220.0 };
+                        seam_bonus + tile_tags[idx].habitability_permille() as f32
+                    };
+                    port_score(a)
+                        .partial_cmp(&port_score(b))
+                        .unwrap_or(Ordering::Equal)
+                        .then_with(|| b.cmp(&a))
+                });
+            if let Some(port_idx) = best_port {
+                tile_tags[port_idx] = tile_tags[port_idx].with(TileTag::CoreSite);
+            }
+        }
     }
 }
