@@ -1,0 +1,243 @@
+// 事件与脉冲规则表（支持运行期热重载，驱动双边契约履约、债券票息兑付、民间商业设施投资脉冲与资产没收）
+[
+  {
+    "id": "base:bilateral_contract_due",
+    "title": "双边供货契约月度履约判定",
+    "options": [
+      {
+        "id": "honor_contract",
+        "label": "履行双边供货契约",
+        "trigger": {
+          "kind": "all",
+          "conds": [
+            { "kind": "compare", "var": "seller_honors_flag", "op": "eq", "value": 1 },
+            { "kind": "compare", "var": "buyer_honors_flag", "op": "eq", "value": 1 }
+          ]
+        },
+        "ai_weight": {
+          "base": 100,
+          "rules": [
+            {
+              "cond": { "kind": "compare", "var": "seller_credit_rating", "op": "ge", "value": 60 },
+              "then_delta": { "op": "add", "val": 40 },
+              "else_delta": { "op": "add", "val": -10 }
+            }
+          ]
+        },
+        "effects": [
+          {
+            "kind": "if",
+            "cond": { "kind": "compare_vars", "lhs": "seller_good_avail", "op": "lt", "rhs": "contract_deliver_cap" },
+            "then_effects": [
+              { "kind": "increment_contract_default" },
+              { "kind": "adjust_credit_rating", "party": "seller", "delta": -5 }
+            ],
+            "else_effects": []
+          },
+          {
+            "kind": "if",
+            "cond": { "kind": "compare_vars", "lhs": "buyer_cash_cents", "op": "lt", "rhs": "contract_full_bill_cents" },
+            "then_effects": [
+              { "kind": "increment_contract_default" },
+              { "kind": "adjust_credit_rating", "party": "buyer", "delta": -5 }
+            ],
+            "else_effects": []
+          },
+          { "kind": "execute_contract_delivery" },
+          {
+            "kind": "if",
+            "cond": {
+              "kind": "all",
+              "conds": [
+                { "kind": "compare", "var": "affordable_qty", "op": "gt", "value": 0 },
+                { "kind": "compare_vars", "lhs": "affordable_qty", "op": "eq", "rhs": "contract_deliver_cap" }
+              ]
+            },
+            "then_effects": [
+              { "kind": "adjust_credit_rating", "party": "seller", "delta": 1 },
+              { "kind": "adjust_credit_rating", "party": "buyer", "delta": 1 }
+            ],
+            "else_effects": []
+          }
+        ]
+      },
+      {
+        "id": "seller_deliberate_breach",
+        "label": "卖方主动违约拒交货物",
+        "trigger": { "kind": "always" },
+        "ai_weight": {
+          "base": -250,
+          "rules": [
+            {
+              "cond": { "kind": "compare", "var": "seller_honors_flag", "op": "eq", "value": 0 },
+              "then_delta": { "op": "add", "val": 1000 }
+            }
+          ]
+        },
+        "effects": [
+          { "kind": "increment_contract_default" },
+          { "kind": "adjust_credit_rating", "party": "seller", "delta": -12 }
+        ]
+      },
+      {
+        "id": "buyer_deliberate_breach",
+        "label": "买方主动违约拒付货款",
+        "trigger": { "kind": "always" },
+        "ai_weight": {
+          "base": -260,
+          "rules": [
+            {
+              "cond": {
+                "kind": "all",
+                "conds": [
+                  { "kind": "compare", "var": "seller_honors_flag", "op": "eq", "value": 1 },
+                  { "kind": "compare", "var": "buyer_honors_flag", "op": "eq", "value": 0 }
+                ]
+              },
+              "then_delta": { "op": "add", "val": 1000 }
+            }
+          ]
+        },
+        "effects": [
+          { "kind": "increment_contract_default" },
+          { "kind": "adjust_credit_rating", "party": "buyer", "delta": -12 }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "base:coupon_claim_due",
+    "title": "标准债权证券月度票息兑付判定",
+    "options": [
+      {
+        "id": "honor_coupon",
+        "label": "按票面利率兑付债权票息",
+        "trigger": {
+          "kind": "all",
+          "conds": [
+            { "kind": "compare", "var": "seller_honors_flag", "op": "eq", "value": 1 },
+            { "kind": "compare", "var": "seller_cash_cents", "op": "ge", "value": 1 }
+          ]
+        },
+        "ai_weight": {
+          "base": 120,
+          "rules": [
+            {
+              "cond": { "kind": "compare", "var": "seller_credit_rating", "op": "ge", "value": 50 },
+              "then_delta": { "op": "add", "val": 50 }
+            }
+          ]
+        },
+        "effects": [
+          { "kind": "execute_coupon_payout" },
+          { "kind": "adjust_credit_rating", "party": "seller", "delta": 1 }
+        ]
+      },
+      {
+        "id": "default_coupon",
+        "label": "拒付或欠付本期债权票息",
+        "trigger": { "kind": "always" },
+        "ai_weight": {
+          "base": -200,
+          "rules": [
+            {
+              "cond": { "kind": "compare", "var": "seller_honors_flag", "op": "eq", "value": 0 },
+              "then_delta": { "op": "add", "val": 1000 }
+            }
+          ]
+        },
+        "effects": [
+          { "kind": "adjust_credit_rating", "party": "seller", "delta": -15 }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "base:sector_invest_commercial",
+    "title": "民间投资池商业服务设施兴建脉冲",
+    "options": [
+      {
+        "id": "invest_commercial",
+        "label": "出资兴建商业服务设施",
+        "trigger": { "kind": "compare_vars", "lhs": "pool_cash_cents", "op": "ge", "rhs": "build_cost_cents" },
+        "ai_weight": {
+          "base": -20,
+          "rules": [
+            {
+              "cond": { "kind": "compare_vars", "lhs": "pool_cash_cents", "op": "ge", "rhs": "pool_cap_cents" },
+              "then_delta": { "op": "add", "val": 120 }
+            },
+            {
+              "cond": { "kind": "compare", "var": "service_price_permille", "op": "ge", "value": 1000 },
+              "then_delta": { "op": "add", "val": 80 }
+            }
+          ]
+        },
+        "effects": [
+          { "kind": "approve_sector_investment" }
+        ]
+      },
+      {
+        "id": "hold_pool_cash",
+        "label": "暂缓商业设施建设",
+        "trigger": { "kind": "always" },
+        "ai_weight": { "base": 10, "rules": [] },
+        "effects": []
+      }
+    ]
+  },
+  {
+    "id": "base:forced_expropriation",
+    "title": "东道国强制无偿没收境内资产",
+    "options": [
+      {
+        "id": "enforce_seizure",
+        "label": "强制收回资产并承担国际信用违约代价",
+        "trigger": { "kind": "always" },
+        "ai_weight": { "base": 100, "rules": [] },
+        "effects": [
+          { "kind": "adjust_credit_rating", "party": "seller", "delta": -20 }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "base:private_bankruptcy",
+    "title": "私营工场破产处置：折价残值收购或破产清拆",
+    "options": [
+      {
+        "id": "acquire_bankrupt_slot",
+        "label": "按破产拆解残值收购并收归本级政府",
+        "trigger": {
+          "kind": "compare_vars",
+          "lhs": "buyer_cash_cents",
+          "op": "ge",
+          "rhs": "contract_full_bill_cents"
+        },
+        "ai_weight": {
+          "base": -100,
+          "rules": [
+            {
+              "cond": { "kind": "compare", "var": "margin_permille", "op": "ge", "value": 150 },
+              "then_delta": { "op": "add", "val": 45 }
+            },
+            {
+              "cond": { "kind": "compare", "var": "buyer_cash_cents", "op": "ge", "value": 500000 },
+              "then_delta": { "op": "add", "val": 45 }
+            }
+          ]
+        },
+        "effects": [
+          { "kind": "approve_bankruptcy_acquisition" }
+        ]
+      },
+      {
+        "id": "demolish_bankrupt_slot",
+        "label": "不予收购，直接破产拆解腾空槽位",
+        "trigger": { "kind": "always" },
+        "ai_weight": { "base": 20, "rules": [] },
+        "effects": []
+      }
+    ]
+  }
+]

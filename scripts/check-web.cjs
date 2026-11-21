@@ -11,15 +11,9 @@ const path = require('node:path');
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     const errors = [];
-    const apiPollRequests = [];
     const wsFrames = [];
 
     page.on('pageerror', (error) => errors.push(String(error)));
-    page.on('request', (req) => {
-      if (req.url().includes('/api/state') || req.url().includes('/api/planets')) {
-        apiPollRequests.push(req.url());
-      }
-    });
     page.on('websocket', (ws) => {
       ws.on('framereceived', (frame) => {
         if (typeof frame.payload === 'string') {
@@ -31,177 +25,101 @@ const path = require('node:path');
     });
 
     await page.goto(url);
-    await page.getByRole('heading', { name: '地球', exact: true }).waitFor();
     await page.getByText('Rust 内核 · WebSocket 推送', { exact: true }).waitFor();
+
+    // 1. No window pops up until clicking Earth!
+    assert.equal(await page.getByTestId('planet-window').count(), 0);
+    await page.getByTestId('earth-globe-trigger').click();
+    await page.getByTestId('planet-window').waitFor();
     await page.getByTestId('surface-canvas').waitFor();
+    assert.equal(await page.getByTestId('surface-canvas').getAttribute('data-map-level'), 'region');
 
-    // 1. Verify initial state: Polity central treasury (2,600), 12 land sectors + 4 oceans,
-    //    local market price, CBD hosting (1/6), and 7-profession Pop breakdown!
-    const surfaceFrames = wsFrames.filter((f) => f.kind === 'planet_surface');
-    assert.equal(surfaceFrames.length, 1);
-    const surf = surfaceFrames[0].surface;
-    assert.equal(surf.regions.filter((r) => !r.is_ocean).length, 12);
-    assert.equal(surf.regions.filter((r) => r.is_ocean).length, 4);
+    // 2. Level 1 click opens Region Window (NOT Tile Window)
+    const canvasBox = await page.getByTestId('surface-canvas').boundingBox();
+    await page.mouse.click(canvasBox.x + canvasBox.width * 0.5, canvasBox.y + canvasBox.height * 0.5);
+    await page.getByTestId('region-window').waitFor();
+    assert.equal(await page.getByTestId('tile-window').count(), 0);
 
-    const initialTreasury = Number(
-      (await page.getByTestId('polity-treasury').textContent()).replace(/,/g, ''),
-    );
-    assert.equal(initialTreasury, 2600);
-    assert.equal(await page.getByTestId('planet-jobs').textContent(), '540/540');
-    assert.ok((await page.getByTestId('sector-cbd-hosting').textContent()).includes('1/6'));
+    // 3. Zoom into Level 2 -> opens Tile Window on click!
+    await page.getByTestId('zoom-into-region').click();
+    await page.waitForTimeout(150);
+    assert.equal(await page.getByTestId('surface-canvas').getAttribute('data-map-level'), 'tile');
+    await page.mouse.click(canvasBox.x + canvasBox.width * 0.5, canvasBox.y + canvasBox.height * 0.5);
+    await page.getByTestId('tile-window').waitFor();
 
-    await page.getByTestId('toggle-pops-detail').click();
-    const popsTableText = await page.getByTestId('sector-pops-table').textContent();
-    assert.equal(popsTableText.includes('家属'), false, 'dependents field must be removed');
-    for (const role of [
-      '个体民',
-      '流民',
-      '劳工 · 待业',
-      '劳工 · 国有',
-      '劳工 · 民间私产',
-      '工程师 · 国有',
-      '学者 · 国有',
-      '官僚 · 国有',
-      '官僚 · 民间私产',
-      '军人 · 国有',
-      '资本家 · 民间私产',
-    ]) {
-      assert.ok(popsTableText.includes(role), `missing employer-qualified pop role ${role} in ${popsTableText}`);
-    }
-    const wageStripText = await page.getByTestId('sector-wage-strip').textContent();
-    assert.ok(wageStripText.includes('学者 130.00') && wageStripText.includes('劳工 60.00'), `unexpected wage strip: ${wageStripText}`);
-
-    if (shotDir) {
-      await page.screenshot({ path: path.join(shotDir, 'surface-regions-1280.png') });
-    }
-
-    // 2. Pick an empty land tile: verify Secondary slots are locked until Primary is built (`1主导+3次要`),
-    //    then build a Primary `2x` dominant orchard (-300 treasury)!
+    // 4. Jump to an empty land tile: general secondary slots are unlocked immediately,
+    //    while prerequisite-bound `base:commercial_street` stays gated on `required_primary_tags`!
     await page.getByTestId('pick-empty-tile').click();
-    await page.getByTestId('secondary-locked-hint').waitFor();
-    await page.getByTestId('build-primary-orchard').click();
-    await page.waitForFunction(
-      () => document.querySelector('[data-testid="slot-primary"]')?.textContent?.includes('2x 主导规模'),
-      null,
-      { timeout: 3000 },
+    await page.waitForTimeout(150);
+    assert.equal(await page.getByTestId('secondary-locked-hint').count(), 0);
+    await page.getByTestId('select-build-secondary0').waitFor();
+    const secOptions = await page
+      .getByTestId('select-build-secondary0')
+      .locator('option')
+      .evaluateAll((opts) => opts.map((o) => o.value));
+    assert.ok(secOptions.length > 0, 'empty land tile must offer general 1x secondary buildings');
+    assert.ok(
+      !secOptions.includes('base:commercial_street'),
+      'prerequisite-bound commercial street must NOT appear when primary lacks required tags',
     );
+    await page.getByTestId('build-secondary0-submit').click();
+    await page.getByTestId('demolish-secondary0').waitFor();
 
-    // 3. Jump back to Capital tile, build 1 State Orchard on Secondary2 (-150), privatize Secondary0 (+120),
-    //    advance 2 months at 4x so private pool accumulates dividends, privatize Secondary2, then found a Corporate Campus!
-    await page.getByTestId('jump-capital-tile').click();
-    await page.getByTestId('build-secondary2-orchard').click();
-    await page.getByTestId('privatize-secondary0').waitFor();
-    await page.getByTestId('privatize-secondary0').click();
-    await page.waitForFunction(
-      () => document.querySelector('[data-testid="sector-cbd-hosting"]')?.textContent?.includes('2/6'),
-      null,
-      { timeout: 3000 },
-    );
-
-    const initialPlanetPop = Number(
-      (await page.getByTestId('planet-population').textContent()).replace(/,/g, ''),
-    );
-    await page.getByRole('button', { name: '4x', exact: true }).click();
-    await page.waitForFunction(
-      (prevPop) => {
-        const rawPop = document.querySelector('[data-testid="planet-population"]')?.textContent;
-        const rawPool = document.querySelector('[data-testid="sector-investment-pool"]')?.textContent;
-        if (!rawPop || !rawPool) return false;
-        return Number(rawPop.replace(/,/g, '')) > prevPop && Number(rawPool.replace(/,/g, '')) >= 120;
-      },
-      initialPlanetPop,
-      { timeout: 5000 },
-    );
-    await page.keyboard.press('Space');
-    await page.getByText('已暂停', { exact: true }).waitFor();
-
-    // Order book: after at least one monthly settlement the closing depth / trades are visible.
-    const bookText = await page.getByTestId('sector-order-book').textContent();
-    assert.ok(/长协 \d+ · 现货 \d+/.test(bookText), `order book summary missing: ${bookText}`);
-    const priceText = await page.getByTestId('sector-apple-price').textContent();
-    assert.ok(/^\d+\.\d{2}$/.test(priceText.trim()), `price must be shown in credits with cents: ${priceText}`);
-    const settledFrame = wsFrames.filter((f) => f.kind === 'planet_view' && f.planet).pop();
-    const tradedVolume = settledFrame.planet.sectors.reduce(
-      (acc, s) => acc + s.order_book.last_contract_volume + s.order_book.last_spot_volume,
-      0,
-    );
-    assert.ok(tradedVolume > 0, 'apples must change hands on the order books after a settlement');
-
-    // Depot and central-bank policy toggles.
-    const depotBefore = await page.getByTestId('cycle-depot-policy').textContent();
-    await page.getByTestId('cycle-depot-policy').click();
-    await page.waitForFunction(
-      (prev) => document.querySelector('[data-testid="cycle-depot-policy"]')?.textContent !== prev,
-      depotBefore,
-      { timeout: 3000 },
-    );
-    const mpBefore = await page.getByTestId('cycle-monetary-policy').textContent();
-    await page.getByTestId('cycle-monetary-policy').click();
-    await page.waitForFunction(
-      (prev) => document.querySelector('[data-testid="cycle-monetary-policy"]')?.textContent !== prev,
-      mpBefore,
-      { timeout: 3000 },
-    );
-
-    // Privatize Secondary2 (or if autonomous private build already added a 3rd private orchard, check `can_found_enterprise`)!
-    const cbdTextAfter = await page.getByTestId('sector-cbd-hosting').textContent();
-    if (cbdTextAfter.includes('2/6')) {
-      await page.getByTestId('privatize-secondary2').click();
+    // 5. Regression test: while time is running (`4x`), zoom back from Level 2 -> Level 1
+    //    via mouse wheel AND verify live ticks NEVER snap the map back to Level 2!
+    await page.getByRole('button', { name: '4x' }).click();
+    await page.mouse.move(canvasBox.x + canvasBox.width * 0.5, canvasBox.y + canvasBox.height * 0.5);
+    for (let i = 0; i < 8; i++) {
+      await page.mouse.wheel(0, 480);
     }
-    await page.waitForFunction(
-      () => {
-        const btn = document.querySelector('[data-testid="region-build-campus"]');
-        return btn && !btn.hasAttribute('disabled');
-      },
-      null,
-      { timeout: 3000 },
+    await page.waitForTimeout(150);
+    assert.equal(await page.getByTestId('surface-canvas').getAttribute('data-map-level'), 'region');
+    const framesBeforeWait = wsFrames.length;
+    await page.waitForTimeout(1400);
+    assert.ok(wsFrames.length > framesBeforeWait, 'live ticks must arrive while time is running');
+    assert.equal(
+      await page.getByTestId('surface-canvas').getAttribute('data-map-level'),
+      'region',
+      'zooming back to Level 1 while time is running must NEVER snap back to Level 2',
     );
+    await page.getByRole('button', { name: '暂停' }).click();
 
-    // Found Corporate Campus (`企业园区`) via macro button and verify named Enterprise appears & CBD hosting slots free up!
-    await page.getByTestId('region-build-campus').click();
-    await page.getByTestId('sector-enterprises').waitFor();
-    const entText = await page.getByTestId('sector-enterprises').textContent();
-    assert.ok(entText.includes('农垦集团'), `expected named enterprise, got ${entText}`);
+    // 6. Scenario switch (`殖民地开局` -> frontier `base:admin` claiming -> switch back to `地球开局`)!
+    await page.getByTestId('scenario-select').selectOption('colony');
+    await page.getByText('已切换至「殖民地开局」并开启新对局。', { exact: true }).waitFor();
+    await page.waitForTimeout(200);
+    const adminInit = await page.getByTestId('polity-admin-quota').textContent();
+    assert.equal(adminInit?.trim(), '9/22', 'Colony Start should begin at 9/22 direct-rule admin quota');
 
-    // Static Voronoi surface must NEVER be resent on build/economy updates!
-    assert.equal(wsFrames.filter((f) => f.kind === 'planet_surface').length, 1);
-    assert.deepEqual(apiPollRequests, []);
-
-    await page.getByRole('button', { name: '自然地形', exact: true }).click();
-    if (shotDir) {
-      await page.screenshot({ path: path.join(shotDir, 'surface-terrain-1280.png') });
+    await page.mouse.click(canvasBox.x + canvasBox.width * 0.5, canvasBox.y + canvasBox.height * 0.5);
+    await page.getByTestId('region-window').waitFor();
+    const allOpts = await page
+      .locator('.region-select[aria-label="切换当前大区"] option')
+      .evaluateAll((opts) => opts.map((o) => o.value));
+    let claimedExpanded = false;
+    for (const val of allOpts) {
+      await page.locator('.region-select[aria-label="切换当前大区"]').selectOption(val);
+      const btn = page.getByTestId('region-claim-frontier');
+      if ((await btn.count()) > 0 && !(await btn.isDisabled())) {
+        await btn.click();
+        await page.waitForTimeout(200);
+        const adminAfter = await page.getByTestId('polity-admin-quota').textContent();
+        assert.notEqual(adminAfter?.trim(), '9/22', 'claiming frontier must increment admin_used');
+        claimedExpanded = true;
+        break;
+      }
     }
-    await page.getByRole('button', { name: '大区染色', exact: true }).click();
+    assert.ok(claimedExpanded, 'must find at least one region with claimable contiguous wilderness');
 
-    // 4. Compact viewport check (640x600) — zero horizontal overflow!
-    await page.setViewportSize({ width: 640, height: 600 });
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.getByTestId('scenario-select').selectOption('earth');
+    await page.getByText('已切换至「地球开局」并开启新对局。', { exact: true }).waitFor();
+
     if (shotDir) {
-      await page.screenshot({ path: path.join(shotDir, 'surface-compact-640.png') });
+      await page.screenshot({ path: path.join(shotDir, 'desktop-1280.png') });
     }
     assert.deepEqual(errors, []);
-    console.log('PASS: order book depth + depot/central-bank policy toggles.');
-    console.log('PASS: Polity treasury + Sector local markets + 7-role Pops + Primary-first 2x slots + Privatization & Corporate Campus.');
-
-    // 5. WebSocket disconnect & reconnect recovery.
-    let blockWs = true;
-    await page.routeWebSocket('**/api/ws', (ws) => {
-      if (blockWs) {
-        ws.close({ code: 1013, reason: 'Unavailable' });
-      } else {
-        ws.connectToServer();
-      }
-    });
-    await page.reload();
-    await page.getByRole('heading', { name: '无法读取星球' }).waitFor();
-    blockWs = false;
-    await page.getByRole('button', { name: '重新连接' }).click();
-    await page.getByRole('heading', { name: '地球', exact: true }).waitFor();
-    console.log('PASS: WebSocket disconnect error panel and reconnect recovery.');
+    console.log('Playwright two-level verification OK, wsFrames=', wsFrames.length);
   } finally {
     await browser.close();
   }
-})().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+})();

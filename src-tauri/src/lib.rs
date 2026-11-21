@@ -1,6 +1,6 @@
 use game_core::{
-    GameRuntime, GameSnapshot, GameSpeed, PlanetSnapshot, PlanetSurfaceSnapshot, StreamEvent,
-    TileSlotKey,
+    DepotPolicy, GameRuntime, GameSnapshot, GameSpeed, MonetaryPolicy, PlanetSnapshot,
+    PlanetSurfaceSnapshot, PolicyChange, ScenarioPreset, StreamEvent, TileSlotKey,
 };
 use std::thread;
 
@@ -47,6 +47,133 @@ fn build_in_region(
     runtime: tauri::State<'_, GameRuntime>,
 ) -> Result<PlanetSnapshot, String> {
     runtime.build_in_region(planet_id, region_id, building_id)
+}
+
+#[tauri::command]
+fn demolish_on_tile(
+    planet_id: String,
+    tile_index: usize,
+    slot: TileSlotKey,
+    runtime: tauri::State<'_, GameRuntime>,
+) -> Result<PlanetSnapshot, String> {
+    runtime.demolish_on_tile(planet_id, tile_index, slot)
+}
+
+#[tauri::command]
+fn privatize_slot(
+    planet_id: String,
+    tile_index: usize,
+    slot: TileSlotKey,
+    runtime: tauri::State<'_, GameRuntime>,
+) -> Result<PlanetSnapshot, String> {
+    runtime.privatize_slot(planet_id, tile_index, slot)
+}
+
+#[tauri::command]
+fn nationalize_slot(
+    planet_id: String,
+    tile_index: usize,
+    slot: TileSlotKey,
+    runtime: tauri::State<'_, GameRuntime>,
+) -> Result<PlanetSnapshot, String> {
+    runtime.nationalize_slot(planet_id, tile_index, slot)
+}
+
+#[tauri::command]
+fn acquire_bankrupt_slot(
+    planet_id: String,
+    tile_index: usize,
+    slot: TileSlotKey,
+    buyer_polity: Option<u16>,
+    runtime: tauri::State<'_, GameRuntime>,
+) -> Result<PlanetSnapshot, String> {
+    runtime.acquire_bankrupt_slot(
+        planet_id,
+        tile_index,
+        slot,
+        buyer_polity.map(game_core::PolityId),
+    )
+}
+
+#[tauri::command]
+fn resolve_pending_event(
+    instance_id: u64,
+    option_index: usize,
+    runtime: tauri::State<'_, GameRuntime>,
+) -> Result<GameSnapshot, String> {
+    Ok((*runtime.resolve_pending_event(instance_id, option_index)?).clone())
+}
+
+#[tauri::command]
+fn toggle_private_land_use(
+    planet_id: String,
+    sector_id: u16,
+    allow: bool,
+    runtime: tauri::State<'_, GameRuntime>,
+) -> Result<PlanetSnapshot, String> {
+    runtime.toggle_private_land_use(planet_id, sector_id, allow)
+}
+
+#[tauri::command]
+fn set_monetary_policy(
+    planet_id: String,
+    policy: MonetaryPolicy,
+    runtime: tauri::State<'_, GameRuntime>,
+) -> Result<PlanetSnapshot, String> {
+    runtime.set_policy(planet_id, PolicyChange::Monetary(policy))
+}
+
+#[tauri::command]
+fn set_depot_policy(
+    planet_id: String,
+    sector_id: u16,
+    policy: DepotPolicy,
+    runtime: tauri::State<'_, GameRuntime>,
+) -> Result<PlanetSnapshot, String> {
+    runtime.set_policy(planet_id, PolicyChange::Depot { sector_id, policy })
+}
+
+#[tauri::command]
+fn set_earth_grid_preset(
+    dense: bool,
+    runtime: tauri::State<'_, GameRuntime>,
+) -> Result<PlanetSnapshot, String> {
+    runtime.set_earth_grid_preset(dense)
+}
+
+#[tauri::command]
+fn set_scenario_preset(
+    scenario: ScenarioPreset,
+    runtime: tauri::State<'_, GameRuntime>,
+) -> Result<PlanetSnapshot, String> {
+    runtime.set_scenario_preset(scenario)
+}
+
+#[tauri::command]
+fn claim_tile(
+    planet_id: String,
+    tile_index: usize,
+    runtime: tauri::State<'_, GameRuntime>,
+) -> Result<PlanetSnapshot, String> {
+    runtime.claim_tile(planet_id, tile_index)
+}
+
+#[tauri::command]
+fn claim_region_frontier(
+    planet_id: String,
+    region_id: u16,
+    max_count: usize,
+    runtime: tauri::State<'_, GameRuntime>,
+) -> Result<PlanetSnapshot, String> {
+    runtime.claim_region_frontier(planet_id, region_id, max_count)
+}
+
+#[tauri::command]
+fn reload_game_data(
+    restart_world: bool,
+    runtime: tauri::State<'_, GameRuntime>,
+) -> Result<String, String> {
+    runtime.reload_data(restart_world)
 }
 
 #[tauri::command]
@@ -99,6 +226,19 @@ pub fn run() {
             set_game_speed,
             build_on_tile,
             build_in_region,
+            demolish_on_tile,
+            privatize_slot,
+            nationalize_slot,
+            acquire_bankrupt_slot,
+            resolve_pending_event,
+            toggle_private_land_use,
+            set_monetary_policy,
+            set_depot_policy,
+            set_earth_grid_preset,
+            set_scenario_preset,
+            claim_tile,
+            claim_region_frontier,
+            reload_game_data,
             subscribe_stream,
             watch_planet,
             unsubscribe_stream

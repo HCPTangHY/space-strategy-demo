@@ -211,6 +211,30 @@ fn drain_client_messages(
                                 slot,
                             );
                         }
+                        ClientCommand::AcquireBankruptSlot {
+                            planet_id,
+                            tile_index,
+                            slot,
+                            buyer_polity,
+                        } => {
+                            let _ = runtime.acquire_bankrupt_slot_async(
+                                sub_id,
+                                planet_id,
+                                tile_index,
+                                slot,
+                                buyer_polity,
+                            );
+                        }
+                        ClientCommand::ResolvePendingEvent {
+                            instance_id,
+                            option_index,
+                        } => {
+                            let _ = runtime.resolve_pending_event_async(
+                                sub_id,
+                                instance_id,
+                                option_index,
+                            );
+                        }
                         ClientCommand::TogglePrivateLandUse {
                             planet_id,
                             sector_id,
@@ -240,6 +264,33 @@ fn drain_client_messages(
                                 planet_id,
                                 PolicyChange::Depot { sector_id, policy },
                             );
+                        }
+                        ClientCommand::SetEarthGridPreset { dense } => {
+                            let _ = runtime.set_earth_grid_preset_async(dense);
+                        }
+                        ClientCommand::SetScenarioPreset { scenario } => {
+                            let _ = runtime.set_scenario_preset_async(Some(sub_id), scenario);
+                        }
+                        ClientCommand::ClaimTile {
+                            planet_id,
+                            tile_index,
+                        } => {
+                            let _ = runtime.claim_tile_async(sub_id, planet_id, tile_index);
+                        }
+                        ClientCommand::ClaimRegionFrontier {
+                            planet_id,
+                            region_id,
+                            max_count,
+                        } => {
+                            let _ = runtime.claim_region_frontier_async(
+                                sub_id,
+                                planet_id,
+                                region_id,
+                                max_count,
+                            );
+                        }
+                        ClientCommand::ReloadData { restart_world } => {
+                            let _ = runtime.reload_data_async(Some(sub_id), restart_world);
                         }
                     }
                 }
@@ -279,6 +330,18 @@ fn run_http_server(
                     Ok(Some(surface)) => serialize_json(&surface),
                     Ok(None) => (404, json_error("找不到指定的星球地表。")),
                     Err(err) => (500, json_error(&err)),
+                }
+            }
+            (&Method::Post, "/api/reload") => {
+                let mut raw = Vec::with_capacity(64);
+                let _ = request.as_reader().take(256).read_to_end(&mut raw);
+                let restart_world = serde_json::from_slice::<serde_json::Value>(&raw)
+                    .ok()
+                    .and_then(|v| v.get("restart_world").and_then(serde_json::Value::as_bool))
+                    .unwrap_or(false);
+                match runtime.reload_data(restart_world) {
+                    Ok(msg) => serialize_json(&serde_json::json!({ "ok": true, "message": msg })),
+                    Err(err) => (400, json_error(&err)),
                 }
             }
             (&Method::Post, "/api/speed") => {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PlanetSnapshot } from './game';
 
 // A procedural illustration, not simulation data and not a geographic Earth map.
@@ -46,9 +46,21 @@ function createSurface(
   return texture;
 }
 
-export function PlanetView({ planet }: { planet: PlanetSnapshot }) {
+export interface PlanetViewProps {
+  planet: PlanetSnapshot;
+  onSelectPlanet?: () => void;
+  isWindowOpen?: boolean;
+}
+
+export function PlanetView({ planet, onSelectPlanet, isWindowOpen = false }: PlanetViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const errorRef = useRef<HTMLParagraphElement>(null);
+  const [globeBox, setGlobeBox] = useState<{ cx: number; cy: number; radius: number }>({
+    cx: 640,
+    cy: 400,
+    radius: 160,
+  });
+
   const { seed, ocean_rgb: ocean, land_rgb: land } = planet.appearance;
   const oceanKey = `${ocean[0]},${ocean[1]},${ocean[2]}`;
   const landKey = `${land[0]},${land[1]},${land[2]}`;
@@ -85,7 +97,7 @@ export function PlanetView({ planet }: { planet: PlanetSnapshot }) {
         starSeed = (Math.imul(starSeed, 1664525) + 1013904223) >>> 0;
         return starSeed / 4294967296;
       };
-      for (let index = 0; index < 220; index++) {
+      for (let index = 0; index < 240; index++) {
         const x = random() * width;
         const y = random() * height;
         const alpha = 0.12 + random() * 0.48;
@@ -95,17 +107,22 @@ export function PlanetView({ planet }: { planet: PlanetSnapshot }) {
         context.fill();
       }
 
-      const compact = width < 760;
-      const cx = width * (compact ? 0.5 : 0.68);
-      const cy = height * (compact ? 0.25 : 0.51);
-      const radius = Math.min(width * (compact ? 0.14 : 0.19), height * (compact ? 0.14 : 0.27));
-      const halo = context.createRadialGradient(cx, cy, radius * 0.94, cx, cy, radius * 1.2);
-      halo.addColorStop(0, 'rgba(108, 169, 199, 0.18)');
-      halo.addColorStop(0.5, 'rgba(70, 122, 161, 0.045)');
+      const cx = width * 0.5;
+      const cy = height * 0.5;
+      const radius = Math.max(88, Math.min(width * 0.22, height * 0.27));
+      setGlobeBox((prev) =>
+        Math.abs(prev.cx - cx) < 1 && Math.abs(prev.cy - cy) < 1 && Math.abs(prev.radius - radius) < 1
+          ? prev
+          : { cx, cy, radius },
+      );
+
+      const halo = context.createRadialGradient(cx, cy, radius * 0.94, cx, cy, radius * 1.24);
+      halo.addColorStop(0, 'rgba(108, 169, 199, 0.22)');
+      halo.addColorStop(0.5, 'rgba(70, 122, 161, 0.055)');
       halo.addColorStop(1, 'rgba(70, 122, 161, 0)');
       context.fillStyle = halo;
       context.beginPath();
-      context.arc(cx, cy, radius * 1.2, 0, Math.PI * 2);
+      context.arc(cx, cy, radius * 1.24, 0, Math.PI * 2);
       context.fill();
       context.drawImage(surface, cx - radius, cy - radius, radius * 2, radius * 2);
     };
@@ -122,8 +139,39 @@ export function PlanetView({ planet }: { planet: PlanetSnapshot }) {
 
   return (
     <>
-      <canvas ref={canvasRef} className="planet-canvas" role="img" aria-label={`${planet.name}的二维示意图，包含海洋、陆地和大气光晕。`} />
-      <p ref={errorRef} hidden className="render-error" role="alert">当前环境不支持 Canvas 2D，无法绘制星球。</p>
+      <canvas
+        ref={canvasRef}
+        className="planet-canvas"
+        role="img"
+        aria-label={`${planet.name}的二维示意图，包含海洋、陆地和大气光晕。`}
+      />
+      {onSelectPlanet && (
+        <button
+          type="button"
+          className={isWindowOpen ? 'planet-globe-hit window-open' : 'planet-globe-hit'}
+          data-testid="earth-globe-trigger"
+          aria-label={`点击查看${planet.name}地表窗口`}
+          style={{
+            left: `${Math.round(globeBox.cx - globeBox.radius)}px`,
+            top: `${Math.round(globeBox.cy - globeBox.radius)}px`,
+            width: `${Math.round(globeBox.radius * 2)}px`,
+            height: `${Math.round(globeBox.radius * 2)}px`,
+          }}
+          onClick={onSelectPlanet}
+        >
+          {!isWindowOpen && (
+            <span className="planet-globe-badge">
+              <strong>{planet.name}</strong>
+              <small>
+                {planet.polity.name} · 人口 {planet.total_population.toLocaleString('zh-CN')} · 点击展开地表
+              </small>
+            </span>
+          )}
+        </button>
+      )}
+      <p ref={errorRef} hidden className="render-error" role="alert">
+        当前环境不支持 Canvas 2D，无法绘制星球。
+      </p>
     </>
   );
 }

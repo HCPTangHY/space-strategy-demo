@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>地球网格与大区编辑器 · Space Strategy</title>
+    <link rel="stylesheet" href="./map-editor.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-dot"></span>
+        <span class="brand-title">地球维诺编辑器</span>
+      </div>
+
+      <div class="btn-group" role="group" aria-label="编辑模式">
+        <button type="button" class="tool-btn active" data-mode="point" data-testid="mode-point" title="左键拖动移点；Shift+左键或双击空白新增点；Alt+左键或 Delete 删除点">
+          1 · 点编辑 (移/增/删)
+        </button>
+        <button type="button" class="tool-btn" data-mode="water" data-testid="mode-water" title="左键点击或按住涂抹陆地/海洋/内陆湖">
+          2 · 海陆笔刷
+        </button>
+        <button type="button" class="tool-btn" data-mode="region" data-testid="mode-region" title="左键点击或按住涂抹大区；Alt+左键吸取光标处大区">
+          3 · 大区划分
+        </button>
+        <button type="button" class="tool-btn" data-mode="terrain" data-testid="mode-terrain" title="左键点击或按住涂抹起伏与地貌，或设定首府格">
+          4 · 地形与首府
+        </button>
+      </div>
+
+      <div class="sep"></div>
+
+      <div class="btn-group" role="group" aria-label="视图开关">
+        <button type="button" class="tool-btn" id="btn-view-mode" data-testid="toggle-view" title="快捷键 Tab：在大区纯色与自然地形色之间切换">
+          视图：大区色
+        </button>
+        <button type="button" class="tool-btn active" id="btn-show-pts" title="快捷键 P：显示或隐藏维诺种子圆点">
+          种子点
+        </button>
+        <button type="button" class="tool-btn" id="btn-show-ids" title="快捷键 I：显示地块序号（放大时清晰可见）">
+          格号
+        </button>
+        <button type="button" class="tool-btn active" id="btn-smooth-coast" title="快捷键 C：平滑海岸线开关">
+          平滑海岸
+        </button>
+        <button type="button" class="tool-btn" id="btn-fit" title="重置缩放到完整世界视图">
+          适应窗口
+        </button>
+      </div>
+
+      <div class="sep"></div>
+
+      <div class="btn-group" role="group" aria-label="历史与存取">
+        <button type="button" class="tool-btn" id="btn-undo" data-testid="btn-undo" disabled title="Ctrl+Z 撤销">
+          撤销
+        </button>
+        <button type="button" class="tool-btn" id="btn-redo" data-testid="btn-redo" disabled title="Ctrl+Y 重做">
+          重做
+        </button>
+        <button type="button" class="tool-btn primary" id="btn-export-json" data-testid="btn-export-json" title="下载编辑后的 earth_map.json（发给助手即可直接写入游戏）">
+          导出 JSON
+        </button>
+        <button type="button" class="tool-btn" id="btn-copy-json" title="复制 JSON 到剪贴板">
+          复制 JSON
+        </button>
+        <button type="button" class="tool-btn" id="btn-import-json" title="从本地 JSON 文件导入继续编辑">
+          导入 JSON
+        </button>
+        <button type="button" class="tool-btn danger" id="btn-reset" title="放弃本地暂存修改，恢复到线上初始地球底稿">
+          重置底稿
+        </button>
+        <a class="tool-btn link-btn" href="./">返回游戏</a>
+      </div>
+      <input type="file" id="file-import" accept=".json,application/json" hidden />
+    </header>
+
+    <main class="stage">
+      <canvas id="map-canvas" data-testid="editor-canvas"></canvas>
+
+      <aside class="side-panel" id="panel-point">
+        <div class="panel-title">点编辑子模式（也可直接用快捷键）</div>
+        <div class="pill-row mb8">
+          <button type="button" class="sub-btn active" data-pt-sub="move" data-testid="pt-sub-move">拖动移点</button>
+          <button type="button" class="sub-btn" data-pt-sub="add" data-testid="pt-sub-add">点击加点</button>
+          <button type="button" class="sub-btn" data-pt-sub="del" data-testid="pt-sub-del">点击删点</button>
+        </div>
+        <ul class="hint-list">
+          <li><b>移动点</b>：左键按住圆点拖动，多边形与海岸线实时重算</li>
+          <li><b>快捷加点</b>：任意子模式下 <code>Shift + 左键</code> 或 <b>双击</b> 空白处</li>
+          <li><b>快捷删点</b>：<code>Alt + 左键</code> 点击圆点，或选中后按 <code>Delete</code></li>
+          <li><b>平移 / 缩放</b>：滚轮缩放，按住 <b>右键 / 中键 / 空格+左键</b> 拖拽平移</li>
+        </ul>
+        <div class="selected-box" id="point-selected-info">未选中地块（点击任一格可查看并单独修改）</div>
+      </aside>
+
+      <aside class="side-panel hidden" id="panel-water">
+        <div class="panel-title">海陆笔刷（点击或按住左键连续涂抹）</div>
+        <div class="pill-row">
+          <button type="button" class="sub-btn active" data-water="land" data-testid="water-land">转为陆地</button>
+          <button type="button" class="sub-btn" data-water="sea" data-testid="water-sea">转为海洋</button>
+          <button type="button" class="sub-btn" data-water="lake" data-testid="water-lake">转为内陆湖</button>
+        </div>
+        <div class="panel-note">支持按住左键滑过多个格子批量涂改；Alt+左键可临时反选海/陆。</div>
+      </aside>
+
+      <aside class="side-panel hidden" id="panel-region">
+        <div class="panel-title-row">
+          <span class="panel-title">大区划分笔刷（Alt+左键吸取）</span>
+          <button type="button" class="mini-btn" id="btn-add-region">+ 新增大区</button>
+        </div>
+        <div class="region-list" id="region-list"></div>
+        <div class="region-edit-row">
+          <label class="field-label" for="inp-region-name">当前区名</label>
+          <input type="text" id="inp-region-name" class="text-inp" maxlength="24" />
+          <input type="color" id="inp-region-color" class="color-inp" title="修改当前大区颜色" />
+        </div>
+      </aside>
+
+      <aside class="side-panel hidden" id="panel-terrain">
+        <div class="panel-title">起伏地形（陆地格涂抹）</div>
+        <div class="pill-row">
+          <button type="button" class="sub-btn active" data-relief="0">平原</button>
+          <button type="button" class="sub-btn" data-relief="1">丘陵 (^)</button>
+          <button type="button" class="sub-btn" data-relief="2">山脉 (▲)</button>
+        </div>
+        <div class="panel-title mt8">气候地貌叠加</div>
+        <div class="pill-row">
+          <button type="button" class="sub-btn active" data-biome="0">草地/农田</button>
+          <button type="button" class="sub-btn" data-biome="1">树林</button>
+          <button type="button" class="sub-btn" data-biome="2">荒漠</button>
+          <button type="button" class="sub-btn" data-biome="3">冻土</button>
+        </div>
+        <div class="mt8">
+          <button type="button" class="sub-btn full-btn" id="btn-set-capital">★ 将当前选中陆地格设为开局首府</button>
+        </div>
+      </aside>
+
+      <div class="status-bar" id="status-bar" data-testid="status-bar">
+        加载地球网格中…
+      </div>
+      <div class="toast hidden" id="toast"></div>
+    </main>
+
+    <script src="./map-editor.js"></script>
+  </body>
+</html>

@@ -93,11 +93,7 @@ mod tests {
         assert_eq!(invs[2].avail(apple), 0, "remote seller sold everything");
         assert_eq!(invs[1].avail(apple), 10, "expensive local seller sold nothing");
         assert_eq!(invs[0].avail(catalog.cash_id()), 10 * 250, "freight paid to carrier");
-        assert_eq!(invs[2].avail(cash_id_from(&catalog)), 10 * 500);
+        assert_eq!(invs[2].avail(catalog.cash_id()), 10 * 500);
         assert_eq!(books[0].last_price_cents, 750);
-    }
-
-    fn cash_id_from(c: &GoodCatalog) -> GoodId {
-        c.cash_id()
     }
 }

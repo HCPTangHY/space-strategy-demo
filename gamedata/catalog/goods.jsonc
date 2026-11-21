@@ -1,0 +1,216 @@
+[
+  // ============================================================================
+  // 货币与商品总表 (1 种法定货币 + 18 种非货币商品：含 4 类本地跨区运力流量商品)
+  // 货币换算：1.00 CR = 100 cents（盘口最小报价步长 10 cents = 0.10 CR）
+  // ============================================================================
+
+  // ── 0. 法定结算货币与直辖行政额度（不进盘口撮合）────────────────────────────
+  {
+    "id": "base:cash",
+    "name": "信用点",
+    "is_currency": true,
+    "unit_volume": 0,
+    "retention_permille": 1000,
+    "transport_channel": "telecom",
+    "genesis_price_cents": 100,
+    "market_rule": {
+      "contract_pool_percent": 0,
+      "pricing_mode": { "kind": "uniform_marginal_fob" },
+      "ma_inertia_weight": 1
+    }
+  },
+  {
+    // 政权直辖行政管理额度：由首府、大区核心与殖民据点按在岗比例供给，不进市场盘口，每实控 1 格陆地消耗 1 份
+    "id": "base:admin",
+    "name": "行政管理力",
+    "non_market": true,
+    "unit_volume": 0,
+    "retention_permille": 0,
+    "transport_channel": "local_only",
+    "genesis_price_cents": 0
+  },
+
+  // ── 1~3. 公用流量层（零体积、月末清零，当月即产即销）───────────────────────
+  {
+    // 基础工业能源；走骨干管网在相邻陆地大区间输配
+    "id": "base:power",
+    "name": "电力",
+    "unit_volume": 0,
+    "retention_permille": 0,
+    "transport_channel": "power_grid",
+    "genesis_price_cents": 300
+  },
+  {
+    // 农业、化工、芯片清洗与干旱/外星大区刚需；走骨干管网跨邻区调水
+    "id": "base:water",
+    "name": "工业淡水",
+    "unit_volume": 0,
+    "retention_permille": 0,
+    "transport_channel": "power_grid",
+    "genesis_price_cents": 200
+  },
+  {
+    // 餐饮零售、文娱物业与大区内现代一日圈公共交通；纯本区产销，动态放大民间投资池上限
+    "id": "base:service",
+    "name": "日常服务",
+    "unit_volume": 0,
+    "retention_permille": 0,
+    "transport_channel": "local_only",
+    "genesis_price_cents": 500,
+    "service_demand_per_100": 2,
+    "excess_satisfaction_bonus": 8,
+    "capital_pool_cap_cents_per_unit": 4000
+  },
+
+  // ── 4~7. 跨区运力与管网流量层（挂本地盘口卖单，跨区贸易配对时实盘捆绑吃单）──
+  {
+    // 陆运份额：平原邻区发收各耗 1 份（合 2.00 CR），过境大区耗 2 份，山地加倍；车多跌向成本底线 0.50 CR，拥堵由买方竞价推高
+    "id": "base:cap_land",
+    "name": "陆运力",
+    "unit_volume": 0,
+    "retention_permille": 0,
+    "transport_channel": "local_only",
+    "genesis_price_cents": 100
+  },
+  {
+    // 海运吞吐份额：水路连通的两端港口按航程各耗 1~3 份（近海双端合 3.00 CR），适合大宗散货跨洲远运
+    "id": "base:cap_sea",
+    "name": "海运力",
+    "unit_volume": 0,
+    "retention_permille": 0,
+    "transport_channel": "local_only",
+    "genesis_price_cents": 150
+  },
+  {
+    // 亚轨道投送份额：无视山海阻隔全球直达，两端空港各耗 1~2 份（双端合 12.00 CR），专运高单价芯片/稀有矿/急救物资
+    "id": "base:cap_air",
+    "name": "空运力",
+    "unit_volume": 0,
+    "retention_permille": 0,
+    "transport_channel": "local_only",
+    "genesis_price_cents": 600
+  },
+  {
+    // 骨干管网输配份额：供电力与工业淡水跨相邻陆区输配，发收两端各耗 1 份（合 1.60 CR）
+    "id": "base:cap_grid",
+    "name": "管网输配力",
+    "unit_volume": 0,
+    "retention_permille": 0,
+    "transport_channel": "local_only",
+    "genesis_price_cents": 80
+  },
+
+  // ── 4~7. 初级资源层（多路争抢源头）────────────────────────────────────────
+  {
+    // 露地农场或封闭水培舱产出的综合口粮与生物质；月损耗 4%，亦可在缺油时合成燃料
+    "id": "base:agri_food",
+    "name": "农产品",
+    "unit_volume": 1,
+    "retention_permille": 960,
+    "transport_channel": "physical",
+    "genesis_price_cents": 800,
+    "staple_demand_per_100": 4,
+    "strategic_depot_target": 80
+  },
+  {
+    // 原油、天然气与外星甲烷统称；火电、燃料精炼、现代化工三路争抢（单件体积 2）
+    "id": "base:hydrocarbon",
+    "name": "碳氢资源",
+    "unit_volume": 2,
+    "retention_permille": 1000,
+    "transport_channel": "physical",
+    "genesis_price_cents": 700,
+    "strategic_depot_target": 40
+  },
+  {
+    // 铁、铜、铝、钛等大宗结构原矿；粗重低价（单件体积 2），激励在矿口就地初炼减重
+    "id": "base:basic_ore",
+    "name": "基础矿石",
+    "unit_volume": 2,
+    "retention_permille": 1000,
+    "transport_channel": "physical",
+    "genesis_price_cents": 600
+  },
+  {
+    // 稀土、锂、铀与特种晶矿统称；核电、精密电子、尖端军工三路争抢，高单价适合远运/空运
+    "id": "base:rare_mineral",
+    "name": "稀有矿物",
+    "unit_volume": 1,
+    "retention_permille": 1000,
+    "transport_channel": "physical",
+    "genesis_price_cents": 1800,
+    "strategic_depot_target": 25
+  },
+
+  // ── 8~12. 工业中间与运输命脉层 ────────────────────────────────────────────
+  {
+    // 航空航海燃油与高能火箭推进剂；远洋港口、亚轨道空港与军工生产的硬命脉
+    "id": "base:refined_fuel",
+    "name": "精炼燃料",
+    "unit_volume": 1,
+    "retention_permille": 1000,
+    "transport_channel": "physical",
+    "genesis_price_cents": 1500,
+    "strategic_depot_target": 50
+  },
+  {
+    // 特种钢材、铝合金至星际钛合金；矿口减重产物，装备、消费品、军工与基建管网骨架
+    "id": "base:structural_alloy",
+    "name": "结构合金",
+    "unit_volume": 1,
+    "retention_permille": 1000,
+    "transport_channel": "physical",
+    "genesis_price_cents": 1800,
+    "strategic_depot_target": 40
+  },
+  {
+    // 工程塑料、合成纤维与耐热复合材料；现代消费品与精密电子的石化底座
+    "id": "base:chem_material",
+    "name": "化工材料",
+    "unit_volume": 1,
+    "retention_permille": 1000,
+    "transport_channel": "physical",
+    "genesis_price_cents": 1600
+  },
+  {
+    // 芯片、传感器与控制阵列；高单价低体积（32 CR / 体积 1），最适配亚轨道点对点快运
+    "id": "base:electronics",
+    "name": "精密电子",
+    "unit_volume": 1,
+    "retention_permille": 1000,
+    "transport_channel": "physical",
+    "genesis_price_cents": 3200
+  },
+  {
+    // 数控产线、掘进机、港口吊机与无人工程机械；矿山、核电与跨区枢纽运转必需品（及日后工程建造力主耗材）
+    "id": "base:ind_equipment",
+    "name": "工业装备",
+    "unit_volume": 2,
+    "retention_permille": 1000,
+    "transport_channel": "physical",
+    "genesis_price_cents": 3800
+  },
+
+  // ── 13~14. 终端民生与军政物资层 ───────────────────────────────────────────
+  {
+    // 家电、服装、个人智能终端与家用载具；可跨区倾销的改善型消费品，显著拉升居民生活满意度
+    "id": "base:consumer_goods",
+    "name": "现代消费品",
+    "unit_volume": 1,
+    "retention_permille": 990,
+    "transport_channel": "physical",
+    "genesis_price_cents": 2500,
+    "service_demand_per_100": 1,
+    "excess_satisfaction_bonus": 12
+  },
+  {
+    // 制式武器、无人战车与防空轨道装备；各级政权首府与大区核心维持治安驻军的硬消耗
+    "id": "base:military_gear",
+    "name": "军工装备",
+    "unit_volume": 1,
+    "retention_permille": 1000,
+    "transport_channel": "physical",
+    "genesis_price_cents": 4500,
+    "strategic_depot_target": 40
+  }
+]
