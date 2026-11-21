@@ -53,10 +53,11 @@ export interface CompiledSurfaceGeometry {
   lakeCoastPath: Path2D;
   shelfContourPath: Path2D;
   regionBorderPath: Path2D;
-  landGridBorderPath: Path2D;
-  shelfGridBorderPath: Path2D;
-  deepGridBorderPath: Path2D;
+  landInternalGridPath: Path2D;
+  seaInternalGridPath: Path2D;
   tilePaths: Path2D[];
+  regionSolidPaths: Path2D[];
+  regionPoliticalBorderPaths: Path2D[];
   hitTestTile: (
     ctx: CanvasRenderingContext2D,
     mapX: number,
@@ -257,19 +258,37 @@ function buildSmoothBasisClosedSvgPath(rawRing: Point2D[]): string {
   return d.join('');
 }
 
-function isSameBorderEdge(a: Point2D, b: Point2D, w: number, h: number): boolean {
+function isPolarBorderEdge(a: Point2D, b: Point2D, h: number): boolean {
   const eps = 0.25;
-  return (
-    (a[0] <= eps && b[0] <= eps)
-    || (a[0] >= w - eps && b[0] >= w - eps)
-    || (a[1] <= eps && b[1] <= eps)
-    || (a[1] >= h - eps && b[1] >= h - eps)
-  );
+  return (a[1] <= eps && b[1] <= eps) || (a[1] >= h - eps && b[1] >= h - eps);
+}
+
+function periodicFieldAt(seed: number, x: number, y: number, width: number, scale: number): number {
+  const cols = Math.max(1, Math.round(width / scale));
+  const effScale = width / cols;
+  const fx = x / effScale;
+  const fy = y / scale;
+  const ix = Math.floor(fx);
+  const iy = Math.floor(fy);
+  const tx = fx - ix;
+  const ty = fy - iy;
+  const sx = tx * tx * (3 - 2 * tx);
+  const sy = ty * ty * (3 - 2 * ty);
+  const ix0 = ((ix % cols) + cols) % cols;
+  const ix1 = (ix0 + 1) % cols;
+
+  const v00 = murmurNoise(seed, ix0, iy);
+  const v10 = murmurNoise(seed, ix1, iy);
+  const v01 = murmurNoise(seed, ix0, iy + 1);
+  const v11 = murmurNoise(seed, ix1, iy + 1);
+  const top = v00 * (1 - sx) + v10 * sx;
+  const bottom = v01 * (1 - sx) + v11 * sx;
+  return top * (1 - sy) + bottom * sy;
 }
 
 /**
- * Subtle, calm symmetric curve on shared ocean cell edges (max 4.5px gentle arc)
- * so deep-ocean polygons lose rigid straightness without creating messy waves.
+ * Subtle, calm symmetric curve on shared ocean cell edges (max 4.5px gentle arc),
+ * periodic modulo `width` so edges straddling `x = 0 <-> width` match identically across copies!
  */
 function seaEdgeControlPoint(
   seed: number,
@@ -278,8 +297,10 @@ function seaEdgeControlPoint(
   width: number,
   height: number,
 ): Point2D | null {
-  if (isSameBorderEdge(a, b, width, height)) return null;
-  const firstIsA = a[0] < b[0] || (a[0] === b[0] && a[1] <= b[1]);
+  if (isPolarBorderEdge(a, b, height)) return null;
+  const wa = ((a[0] % width) + width) % width;
+  const wb = ((b[0] % width) + width) % width;
+  const firstIsA = Math.abs(wa - wb) > 1e-3 ? wa < wb : a[1] <= b[1];
   const p0 = firstIsA ? a : b;
   const p1 = firstIsA ? b : a;
   const dx = p1[0] - p0[0];
@@ -289,9 +310,9 @@ function seaEdgeControlPoint(
 
   const mx = (p0[0] + p1[0]) * 0.5;
   const my = (p0[1] + p1[1]) * 0.5;
-  const wave = (fieldAt(seed ^ 0x51a7_3d91, mx, my, 120) - 0.5) * 2;
+  const wave = (periodicFieldAt(seed ^ 0x51a7_3d91, mx, my, width, 120) - 0.5) * 2;
   const offset = wave * Math.min(len * 0.12, 4.5);
-  const cx = Math.max(0.5, Math.min(width - 0.5, mx + (-dy / len) * offset));
+  const cx = mx + (-dy / len) * offset;
   const cy = Math.max(0.5, Math.min(height - 0.5, my + (dx / len) * offset));
   return [cx, cy];
 }
@@ -349,10 +370,38 @@ export function compileSurfaceGeometry(surface: PlanetSurfaceSnapshot): Compiled
     regionBorderPath.lineTo(b[0], b[1]);
   }
 
-  const landGridBorderPath = new Path2D();
-  const shelfGridBorderPath = new Path2D();
-  const deepGridBorderPath = new Path2D();
   const tilePaths: Path2D[] = new Array<Path2D>(surface.tiles.length);
+  const landInternalGridPath = new Path2D();
+  const seaInternalGridPath = new Path2D();
+  const regionSolidPaths: Path2D[] = Array.from(
+    { length: surface.regions.length },
+    () => new Path2D(),
+  );
+  const regionPoliticalBorderPaths: Path2D[] = Array.from(
+    { length: surface.regions.length },
+    () => new Path2D(),
+  );
+
+  const vKey = (pt: Point2D): string => `${Math.round(pt[0] * 10)},${Math.round(pt[1] * 10)}`;
+  const ensureClockwise = (poly: ReadonlyArray<Point2D>): Point2D[] => {
+    let area2 = 0;
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i]!;
+      const b = poly[(i + 1) % poly.length]!;
+      area2 += a[0] * b[1] - b[0] * a[1];
+    }
+    return area2 >= 0 ? [...poly] : [...poly].reverse();
+  };
+
+  interface DirectedLandEdge {
+    ka: string;
+    kb: string;
+    a: Point2D;
+    b: Point2D;
+    regionId: number;
+  }
+  const landEdgeMap = new Map<string, DirectedLandEdge>();
+  const seenSeaEdges = new Set<string>();
 
   const cols = 24;
   const rows = 14;
@@ -366,12 +415,6 @@ export function compileSurfaceGeometry(surface: PlanetSurfaceSnapshot): Compiled
     else landTiles.push(tile);
 
     const tp = new Path2D();
-    const targetGrid = !isWater
-      ? landGridBorderPath
-      : tile.tags.includes('coastal_sea')
-        ? shelfGridBorderPath
-        : deepGridBorderPath;
-
     const poly = tile.polygon;
     let minX = Infinity;
     let maxX = -Infinity;
@@ -381,7 +424,6 @@ export function compileSurfaceGeometry(surface: PlanetSurfaceSnapshot): Compiled
     if (poly.length > 0) {
       const [sx, sy] = poly[0]!;
       tp.moveTo(sx, sy);
-      targetGrid.moveTo(sx, sy);
 
       for (let i = 0; i < poly.length; i++) {
         const cur = poly[i]!;
@@ -393,9 +435,25 @@ export function compileSurfaceGeometry(surface: PlanetSurfaceSnapshot): Compiled
 
         if (isWater) {
           const ctrl = seaEdgeControlPoint(surface.seed, cur, nxt, surface.width, surface.height);
+          const wa = (((Math.round(cur[0] * 10) % Math.round(surface.width * 10)) + Math.round(surface.width * 10)) % Math.round(surface.width * 10));
+          const wb = (((Math.round(nxt[0] * 10) % Math.round(surface.width * 10)) + Math.round(surface.width * 10)) % Math.round(surface.width * 10));
+          const k1 = `${wa},${Math.round(cur[1] * 10)}`;
+          const k2 = `${wb},${Math.round(nxt[1] * 10)}`;
+          const seaEdgeKey = k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`;
+          const shouldRecordSeaEdge =
+            !seenSeaEdges.has(seaEdgeKey) && !isPolarBorderEdge(cur, nxt, surface.height);
+          if (shouldRecordSeaEdge) {
+            seenSeaEdges.add(seaEdgeKey);
+            seaInternalGridPath.moveTo(cur[0], cur[1]);
+            if (ctrl) {
+              seaInternalGridPath.quadraticCurveTo(ctrl[0], ctrl[1], nxt[0], nxt[1]);
+            } else {
+              seaInternalGridPath.lineTo(nxt[0], nxt[1]);
+            }
+          }
+
           if (ctrl) {
             tp.quadraticCurveTo(ctrl[0], ctrl[1], nxt[0], nxt[1]);
-            targetGrid.quadraticCurveTo(ctrl[0], ctrl[1], nxt[0], nxt[1]);
             if (ctrl[0] < minX) minX = ctrl[0];
             if (ctrl[0] > maxX) maxX = ctrl[0];
             if (ctrl[1] < minY) minY = ctrl[1];
@@ -404,42 +462,72 @@ export function compileSurfaceGeometry(surface: PlanetSurfaceSnapshot): Compiled
           }
         }
         tp.lineTo(nxt[0], nxt[1]);
-        targetGrid.lineTo(nxt[0], nxt[1]);
       }
       tp.closePath();
-      targetGrid.closePath();
+
+      if (!isWater && poly.length >= 3) {
+        const cwPoly = ensureClockwise(poly);
+        for (let i = 0; i < cwPoly.length; i++) {
+          const a = cwPoly[i]!;
+          const b = cwPoly[(i + 1) % cwPoly.length]!;
+          const ka = vKey(a);
+          const kb = vKey(b);
+          if (ka === kb) continue;
+          landEdgeMap.set(`${ka}->${kb}`, {
+            ka,
+            kb,
+            a,
+            b,
+            regionId: tile.region_id,
+          });
+        }
+      }
     }
     tilePaths[tile.index] = tp;
 
     const pad = isWater ? 5 : 1;
-    const c0 = Math.max(0, Math.min(cols - 1, Math.floor(((minX - pad) / surface.width) * cols)));
-    const c1 = Math.max(0, Math.min(cols - 1, Math.floor(((maxX + pad) / surface.width) * cols)));
+    const rawC0 = Math.floor(((minX - pad) / surface.width) * cols);
+    const rawC1 = Math.floor(((maxX + pad) / surface.width) * cols);
     const r0 = Math.max(0, Math.min(rows - 1, Math.floor(((minY - pad) / surface.height) * rows)));
     const r1 = Math.max(0, Math.min(rows - 1, Math.floor(((maxY + pad) / surface.height) * rows)));
     for (let r = r0; r <= r1; r++) {
-      for (let c = c0; c <= c1; c++) {
-        buckets[r * cols + c]!.push(tile);
+      const seenCols = new Set<number>();
+      for (let rc = rawC0; rc <= rawC1; rc++) {
+        const wc = ((rc % cols) + cols) % cols;
+        if (seenCols.has(wc)) continue;
+        seenCols.add(wc);
+        buckets[r * cols + wc]!.push(tile);
       }
     }
   }
 
-  const hitTestTile: CompiledSurfaceGeometry['hitTestTile'] = (ctx, mapX, mapY) => {
-    if (mapX < 0 || mapX > surface.width || mapY < 0 || mapY > surface.height) {
+  const hitTestTile: CompiledSurfaceGeometry['hitTestTile'] = (ctx, rawMapX, mapY) => {
+    if (mapY < 0 || mapY > surface.height) {
       return null;
     }
+    const w = surface.width;
+    const mapX = ((rawMapX % w) + w) % w;
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    const inLand = ctx.isPointInPath(landMaskPath, mapX, mapY, 'evenodd');
+    const inLand =
+      ctx.isPointInPath(landMaskPath, mapX, mapY, 'evenodd')
+      || (mapX < 80 && ctx.isPointInPath(landMaskPath, mapX + w, mapY, 'evenodd'))
+      || (mapX > w - 80 && ctx.isPointInPath(landMaskPath, mapX - w, mapY, 'evenodd'));
 
     const wantWater = !inLand;
-    const col = Math.max(0, Math.min(cols - 1, Math.floor((mapX / surface.width) * cols)));
+    const col = Math.max(0, Math.min(cols - 1, Math.floor((mapX / w) * cols)));
     const row = Math.max(0, Math.min(rows - 1, Math.floor((mapY / surface.height) * rows)));
     const candidates = buckets[row * cols + col]!;
 
     for (const cand of candidates) {
       if (isWaterTags(cand.tags) !== wantWater) continue;
       const tPath = tilePaths[cand.index];
-      if (tPath && ctx.isPointInPath(tPath, mapX, mapY)) {
+      if (!tPath) continue;
+      if (
+        ctx.isPointInPath(tPath, mapX, mapY)
+        || (mapX < 96 && ctx.isPointInPath(tPath, mapX + w, mapY))
+        || (mapX > w - 96 && ctx.isPointInPath(tPath, mapX - w, mapY))
+      ) {
         ctx.restore();
         return cand;
       }
@@ -451,7 +539,8 @@ export function compileSurfaceGeometry(surface: PlanetSurfaceSnapshot): Compiled
     let nearest: SurfacePolygonTile | null = null;
     let bestD2 = Infinity;
     for (const cand of pool) {
-      const dx = cand.center[0] - mapX;
+      const rawDx = Math.abs(cand.center[0] - mapX);
+      const dx = Math.min(rawDx, w - rawDx);
       const dy = cand.center[1] - mapY;
       const d2 = dx * dx + dy * dy;
       if (d2 < bestD2) {
@@ -461,6 +550,80 @@ export function compileSurfaceGeometry(surface: PlanetSurfaceSnapshot): Compiled
     }
     return nearest;
   };
+
+  // Dissolve internal edges within each macro-region so Level 1 has ZERO single-tile edges,
+  // and record each internal same-region edge ONCE in `landInternalGridPath` for Level 2's thin mesh!
+  const exteriorByRegion: Array<Map<string, DirectedLandEdge[]>> = Array.from(
+    { length: surface.regions.length },
+    () => new Map<string, DirectedLandEdge[]>(),
+  );
+
+  for (const edge of landEdgeMap.values()) {
+    const rev = landEdgeMap.get(`${edge.kb}->${edge.ka}`);
+    if (rev && rev.regionId === edge.regionId) {
+      if (edge.ka < edge.kb) {
+        landInternalGridPath.moveTo(edge.a[0], edge.a[1]);
+        landInternalGridPath.lineTo(edge.b[0], edge.b[1]);
+      }
+      continue;
+    }
+
+    const bucketMap = exteriorByRegion[edge.regionId];
+    if (bucketMap) {
+      let arr = bucketMap.get(edge.ka);
+      if (!arr) {
+        arr = [];
+        bucketMap.set(edge.ka, arr);
+      }
+      arr.push(edge);
+    }
+
+    if (rev && rev.regionId !== edge.regionId) {
+      const pBorder = regionPoliticalBorderPaths[edge.regionId];
+      if (pBorder) {
+        pBorder.moveTo(edge.a[0], edge.a[1]);
+        pBorder.lineTo(edge.b[0], edge.b[1]);
+      }
+    } else {
+      // Coastal chord `a -> b` (clockwise around land -> outward normal into water is `[dy, -dx]`):
+      // append a clockwise 7px coastal fringe quad so `regionSolidPaths` reaches every fractal cape!
+      const dx = edge.b[0] - edge.a[0];
+      const dy = edge.b[1] - edge.a[1];
+      const len = Math.hypot(dx, dy);
+      const rSolid = regionSolidPaths[edge.regionId];
+      if (len > 1e-3 && rSolid) {
+        const nx = (dy / len) * 7.5;
+        const ny = (-dx / len) * 7.5;
+        rSolid.moveTo(edge.a[0], edge.a[1]);
+        rSolid.lineTo(edge.a[0] + nx, edge.a[1] + ny);
+        rSolid.lineTo(edge.b[0] + nx, edge.b[1] + ny);
+        rSolid.lineTo(edge.b[0], edge.b[1]);
+        rSolid.closePath();
+      }
+    }
+  }
+
+  for (let regId = 0; regId < exteriorByRegion.length; regId++) {
+    const adj = exteriorByRegion[regId]!;
+    const rSolid = regionSolidPaths[regId]!;
+    for (const [startKey, list] of adj.entries()) {
+      while (list.length > 0) {
+        const first = list.pop()!;
+        rSolid.moveTo(first.a[0], first.a[1]);
+        rSolid.lineTo(first.b[0], first.b[1]);
+        let curKey = first.kb;
+        let guard = 0;
+        while (curKey !== startKey && guard++ < 4096) {
+          const nextArr = adj.get(curKey);
+          if (!nextArr || nextArr.length === 0) break;
+          const nextEdge = nextArr.pop()!;
+          rSolid.lineTo(nextEdge.b[0], nextEdge.b[1]);
+          curKey = nextEdge.kb;
+        }
+        rSolid.closePath();
+      }
+    }
+  }
 
   return {
     landMaskSvgPath,
@@ -472,10 +635,11 @@ export function compileSurfaceGeometry(surface: PlanetSurfaceSnapshot): Compiled
     lakeCoastPath,
     shelfContourPath,
     regionBorderPath,
-    landGridBorderPath,
-    shelfGridBorderPath,
-    deepGridBorderPath,
+    landInternalGridPath,
+    seaInternalGridPath,
     tilePaths,
+    regionSolidPaths,
+    regionPoliticalBorderPaths,
     hitTestTile,
   };
 }
