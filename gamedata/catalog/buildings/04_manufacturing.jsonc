@@ -1,0 +1,163 @@
+[
+  // ============================================================================
+  // 建筑分表 04：精炼化工、重工与高端制造设施 (8 座)
+  // ============================================================================
+  {
+    // 主力石化炼油与推进剂厂（体积 24 -> 14 减重）：工资 51 CR + 投入(碳氢12*7 + 电6*3 = 102 CR) = 153 CR -> 产出燃料 14*15 = 210 CR（毛利 +57 CR / +27.1%）
+    "id": "base:fuel_refinery",
+    "name": "燃料精炼厂",
+    "slot_rule": "any",
+    "build_cost": 280,
+    "jobs_by_role": [
+      ["base:laborer", 35],
+      ["base:engineer", 25]
+    ],
+    "tags": ["refining"],
+    "required_tags": ["land"],
+    "monthly_inputs": [
+      ["base:hydrocarbon", 12],
+      ["base:power", 6]
+    ],
+    "monthly_output": [["base:refined_fuel", 14]]
+  },
+  {
+    // 缺油国应急替代路线（与民争粮合成生物/电制燃料，常态薄利，封锁缺油涨价时救急）：
+    // 工资 42 CR + 投入(农产品10*8 + 电8*3 + 水5*2 = 114 CR) = 156 CR -> 产出燃料 12*15 = 180 CR（毛利 +24 CR / +13.3%）
+    "id": "base:biofuel_syn_plant",
+    "name": "生物与合成燃料厂",
+    "slot_rule": "any",
+    "build_cost": 260,
+    "jobs_by_role": [
+      ["base:laborer", 30],
+      ["base:engineer", 20]
+    ],
+    "tags": ["refining"],
+    "required_tags": ["land"],
+    "monthly_inputs": [
+      ["base:agri_food", 10],
+      ["base:power", 8],
+      ["base:water", 5]
+    ],
+    "monthly_output": [["base:refined_fuel", 12]]
+  },
+  {
+    // 矿口初炼减重主力（矿石体积 28 -> 合金体积 12，省近六成运力）：
+    // 工资 54 CR + 投入(基础矿14*6 + 电8*3 = 108 CR) = 162 CR -> 产出合金 12*18 = 216 CR（毛利 +54 CR / +25.0%）
+    "id": "base:alloy_foundry",
+    "name": "结构合金冶炼厂",
+    "slot_rule": "any",
+    "build_cost": 320,
+    "jobs_by_role": [
+      ["base:laborer", 50],
+      ["base:engineer", 20]
+    ],
+    "tags": ["refining"],
+    "required_tags": ["land"],
+    "monthly_inputs": [
+      ["base:basic_ore", 14],
+      ["base:power", 8]
+    ],
+    "monthly_output": [["base:structural_alloy", 12]]
+  },
+  {
+    // 现代聚合物与复合材料化工厂：工资 51 CR + 投入(碳氢10*7 + 水6*2 + 电6*3 = 100 CR) = 151 CR -> 产出化工材料 13*16 = 208 CR（毛利 +57 CR / +27.4%）
+    "id": "base:chemical_plant",
+    "name": "现代化工材料厂",
+    "slot_rule": "any",
+    "build_cost": 300,
+    "jobs_by_role": [
+      ["base:laborer", 35],
+      ["base:engineer", 25]
+    ],
+    "tags": ["refining"],
+    "required_tags": ["land"],
+    "monthly_inputs": [
+      ["base:hydrocarbon", 10],
+      ["base:water", 6],
+      ["base:power", 6]
+    ],
+    "monthly_output": [["base:chem_material", 13]]
+  },
+  {
+    // 晶圆芯片与精密传感制造厂：工资 85.5 CR + 投入(稀有矿4*18 + 化工3*16 + 合金2*18 + 电8*3 + 水5*2 = 190 CR) = 275.5 CR -> 产出电子 12*32 = 384 CR（毛利 +108.5 CR / +28.3%）
+    "id": "base:electronics_fab",
+    "name": "精密电子芯片厂",
+    "slot_rule": "any",
+    "build_cost": 450,
+    "jobs_by_role": [
+      ["base:engineer", 45],
+      ["base:academic", 15],
+      ["base:laborer", 20]
+    ],
+    "tags": ["manufacturing"],
+    "required_tags": ["land"],
+    "monthly_inputs": [
+      ["base:rare_mineral", 4],
+      ["base:chem_material", 3],
+      ["base:structural_alloy", 2],
+      ["base:power", 8],
+      ["base:water", 5]
+    ],
+    "monthly_output": [["base:electronics", 12]]
+  },
+  {
+    // 重型机械与自动化工程装备厂：工资 72 CR + 投入(合金6*18 + 电子3*32 + 电6*3 = 222 CR) = 294 CR -> 产出工业装备 10*38 = 380 CR（毛利 +86 CR / +22.6%）
+    "id": "base:equipment_works",
+    "name": "工业装备制造厂",
+    "slot_rule": "any",
+    "build_cost": 420,
+    "jobs_by_role": [
+      ["base:engineer", 40],
+      ["base:laborer", 40]
+    ],
+    "tags": ["manufacturing"],
+    "required_tags": ["land"],
+    "monthly_inputs": [
+      ["base:structural_alloy", 6],
+      ["base:electronics", 3],
+      ["base:power", 6]
+    ],
+    "monthly_output": [["base:ind_equipment", 10]]
+  },
+  {
+    // 轻工家电与智能终端消费品厂：工资 57 CR + 投入(化工5*16 + 电子2*32 + 合金2*18 + 电5*3 = 195 CR) = 252 CR -> 产出消费品 14*25 = 350 CR（毛利 +98 CR / +28.0%）
+    "id": "base:consumer_factory",
+    "name": "现代消费品工厂",
+    "slot_rule": "any",
+    "build_cost": 340,
+    "jobs_by_role": [
+      ["base:laborer", 55],
+      ["base:engineer", 20]
+    ],
+    "tags": ["manufacturing"],
+    "required_tags": ["land"],
+    "monthly_inputs": [
+      ["base:chem_material", 5],
+      ["base:electronics", 2],
+      ["base:structural_alloy", 2],
+      ["base:power", 5]
+    ],
+    "monthly_output": [["base:consumer_goods", 14]]
+  },
+  {
+    // 军工重装总装厂：工资 75 CR + 投入(合金5*18 + 电子3*32 + 稀有矿2*18 + 燃料3*15 + 电6*3 = 285 CR) = 360 CR -> 产出军工 10*45 = 450 CR（毛利 +90 CR / +20.0%）
+    "id": "base:defense_plant",
+    "name": "军工重装厂",
+    "slot_rule": "any",
+    "build_cost": 480,
+    "jobs_by_role": [
+      ["base:engineer", 45],
+      ["base:laborer", 35]
+    ],
+    "tags": ["military"],
+    "required_tags": ["land"],
+    "monthly_inputs": [
+      ["base:structural_alloy", 5],
+      ["base:electronics", 3],
+      ["base:rare_mineral", 2],
+      ["base:refined_fuel", 3],
+      ["base:power", 6]
+    ],
+    "monthly_output": [["base:military_gear", 10]]
+  }
+]

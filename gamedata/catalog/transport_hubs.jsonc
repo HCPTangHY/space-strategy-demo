@@ -1,0 +1,48 @@
+[
+  // ============================================================================
+  // 跨区运力盘口映射与路线消耗份额表 (100% 挂单竞价驱动，零人工涨跌价公式)
+  // - 每座基建工场直接产出对应的运力流量商品挂在本大区盘口 asks 上出售；
+  // - 跨区贸易成交时，按每 1 体积货物在沿途各节点消耗的整数份额实盘吃单，
+  //   未满载节点按卖单底价结账，被抢空的瓶颈节点自动吃下边际买方竞价溢价。
+  // ============================================================================
+  {
+    // 陆路多跳：平原邻区发收各耗 1 份，中间过境耗 2 份（丘陵/荒漠/山地边界按地形倍数放大）
+    "building_id": "base:intercontinental_rail_hub",
+    "kind": "land_relay",
+    "capacity_good_id": "base:cap_land",
+    "endpoint_shares": 1,
+    "transit_shares": 2,
+    "steps_per_extra_share": 0,
+    "max_extra_shares": 0
+  },
+  {
+    // 远洋直达：水路连通的两端港口基础各耗 1 份，每多航行 5 格海域两端各加 1 份（最多 +2 份）
+    "building_id": "base:deepwater_port",
+    "kind": "sea_point_to_point",
+    "capacity_good_id": "base:cap_sea",
+    "endpoint_shares": 1,
+    "transit_shares": 0,
+    "steps_per_extra_share": 5,
+    "max_extra_shares": 2
+  },
+  {
+    // 亚轨道直达：无视地形全球直达，两端空港基础各耗 1 份，超远跨半球（>6 步）各加 1 份
+    "building_id": "base:suborbital_port",
+    "kind": "suborbital_point_to_point",
+    "capacity_good_id": "base:cap_air",
+    "endpoint_shares": 1,
+    "transit_shares": 0,
+    "steps_per_extra_share": 6,
+    "max_extra_shares": 1
+  },
+  {
+    // 骨干管网：电力与工业淡水跨相邻陆区输配，发收各耗 1 份，中间过境耗 2 份
+    "building_id": "base:backbone_grid_hub",
+    "kind": "utility_grid_relay",
+    "capacity_good_id": "base:cap_grid",
+    "endpoint_shares": 1,
+    "transit_shares": 2,
+    "steps_per_extra_share": 0,
+    "max_extra_shares": 0
+  }
+]

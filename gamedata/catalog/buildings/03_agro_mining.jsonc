@@ -1,0 +1,79 @@
+[
+  // ============================================================================
+  // 建筑分表 03：现代农业与矿产采掘设施 (4 座)
+  // ============================================================================
+  {
+    // 现代集约农场与封闭水培园（禁崇山峻岭）：工资 60 CR + 投入(水8*2 + 电4*3 = 28 CR) = 88 CR -> 产出农产品 15*8 = 120 CR（毛利 +32 CR / +26.7%）
+    "id": "base:agro_farm",
+    "name": "现代农场",
+    "slot_rule": "any",
+    "build_cost": 180,
+    "jobs_by_role": [
+      ["base:laborer", 80],
+      ["base:engineer", 10]
+    ],
+    "tags": ["agriculture"],
+    "required_tags": ["land"],
+    "forbidden_tags": ["mountains"],
+    "monthly_inputs": [
+      ["base:water", 8],
+      ["base:power", 4]
+    ],
+    "monthly_output": [["base:agri_food", 15]]
+  },
+  {
+    // 油气田与甲烷钻井场：工资 57 CR + 投入(电5*3 + 装备1*38 = 53 CR) = 110 CR -> 产出碳氢 22*7 = 154 CR（毛利 +44 CR / +28.6%）
+    "id": "base:hydrocarbon_rig",
+    "name": "碳氢开采场",
+    "slot_rule": "any",
+    "build_cost": 260,
+    "jobs_by_role": [
+      ["base:laborer", 55],
+      ["base:engineer", 20]
+    ],
+    "tags": ["mining"],
+    "required_tags": ["land"],
+    "monthly_inputs": [
+      ["base:power", 5],
+      ["base:ind_equipment", 1]
+    ],
+    "monthly_output": [["base:hydrocarbon", 22]]
+  },
+  {
+    // 大宗结构金属矿山：工资 60 CR + 投入(电5*3 + 装备1*38 = 53 CR) = 113 CR -> 产出基础矿石 26*6 = 156 CR（毛利 +43 CR / +27.6%）
+    "id": "base:basic_mine",
+    "name": "基础金属矿场",
+    "slot_rule": "any",
+    "build_cost": 220,
+    "jobs_by_role": [
+      ["base:laborer", 70],
+      ["base:engineer", 15]
+    ],
+    "tags": ["mining"],
+    "required_tags": ["land"],
+    "monthly_inputs": [
+      ["base:power", 5],
+      ["base:ind_equipment", 1]
+    ],
+    "monthly_output": [["base:basic_ore", 26]]
+  },
+  {
+    // 稀土、锂与裂变铀矿场：工资 69 CR + 投入(电7*3 + 水4*2 + 装备1*38 = 67 CR) = 136 CR -> 产出稀有矿物 10*18 = 180 CR（毛利 +44 CR / +24.4%）
+    "id": "base:rare_mine",
+    "name": "稀有与裂变矿场",
+    "slot_rule": "any",
+    "build_cost": 340,
+    "jobs_by_role": [
+      ["base:laborer", 55],
+      ["base:engineer", 30]
+    ],
+    "tags": ["mining"],
+    "required_tags": ["land"],
+    "monthly_inputs": [
+      ["base:power", 7],
+      ["base:water", 4],
+      ["base:ind_equipment", 1]
+    ],
+    "monthly_output": [["base:rare_mineral", 10]]
+  }
+]

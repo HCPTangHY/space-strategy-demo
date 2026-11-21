@@ -1,0 +1,90 @@
+[
+  // ============================================================================
+  // 建筑分表 02：水务与发电公用设施 (5 座)
+  // 成本核算按次槽 1x 标准规模注明（any 建筑建在主槽自动按 2x 放大，毛利率不变）
+  // ============================================================================
+  {
+    // 湿润区地表水厂（禁荒漠）：工资 36 CR + 投入(电4*3 = 12 CR) = 48 CR -> 产出淡水 34*2 = 68 CR（毛利 +20 CR / +29.4%）
+    "id": "base:water_treatment_plant",
+    "name": "净水供水厂",
+    "slot_rule": "any",
+    "build_cost": 160,
+    "jobs_by_role": [
+      ["base:laborer", 40],
+      ["base:engineer", 10]
+    ],
+    "tags": ["water"],
+    "required_tags": ["land"],
+    "forbidden_tags": ["arid"],
+    "monthly_inputs": [["base:power", 4]],
+    "monthly_output": [["base:water", 34]]
+  },
+  {
+    // 干旱区/沿海/外星高耗电取水与淡化循环厂：工资 33 CR + 投入(电10*3 = 30 CR) = 63 CR -> 产出淡水 42*2 = 84 CR（毛利 +21 CR / +25.0%）
+    "id": "base:desalination_plant",
+    "name": "海水淡化与循环水厂",
+    "slot_rule": "any",
+    "build_cost": 240,
+    "jobs_by_role": [
+      ["base:laborer", 25],
+      ["base:engineer", 15]
+    ],
+    "tags": ["water"],
+    "required_tags": ["land"],
+    "monthly_inputs": [["base:power", 10]],
+    "monthly_output": [["base:water", 42]]
+  },
+  {
+    // 零原料冷启动可再生电源（防止开荒死锁）：工资 48 CR + 零原料 = 48 CR -> 产出电力 22*3 = 66 CR（毛利 +18 CR / +27.3%）
+    "id": "base:renewable_power_plant",
+    "name": "风光水电站",
+    "slot_rule": "any",
+    "build_cost": 320,
+    "jobs_by_role": [
+      ["base:laborer", 30],
+      ["base:engineer", 25]
+    ],
+    "tags": ["power"],
+    "required_tags": ["land"],
+    "monthly_inputs": [],
+    "monthly_output": [["base:power", 22]]
+  },
+  {
+    // 常规主力火电（低造价高出力，抢碳氢资源）：工资 48 CR + 投入(碳氢6*7 + 水3*2 = 48 CR) = 96 CR -> 产出电力 44*3 = 132 CR（毛利 +36 CR / +27.3%）
+    "id": "base:thermal_power_plant",
+    "name": "燃气火电站",
+    "slot_rule": "any",
+    "build_cost": 240,
+    "jobs_by_role": [
+      ["base:laborer", 40],
+      ["base:engineer", 20]
+    ],
+    "tags": ["power"],
+    "required_tags": ["land"],
+    "monthly_inputs": [
+      ["base:hydrocarbon", 6],
+      ["base:water", 3]
+    ],
+    "monthly_output": [["base:power", 44]]
+  },
+  {
+    // 主槽巨型核电基荷（抢稀有矿物）：工资 110 CR + 投入(稀有矿3*18 + 装备1*38 + 水8*2 = 108 CR) = 218 CR -> 产出电力 100*3 = 300 CR（毛利 +82 CR / +27.3%）
+    "id": "base:nuclear_power_plant",
+    "name": "核能电站",
+    "slot_rule": "primary_only",
+    "build_cost": 760,
+    "jobs_by_role": [
+      ["base:engineer", 60],
+      ["base:academic", 20],
+      ["base:laborer", 20]
+    ],
+    "tags": ["power"],
+    "required_tags": ["land"],
+    "monthly_inputs": [
+      ["base:rare_mineral", 3],
+      ["base:ind_equipment", 1],
+      ["base:water", 8]
+    ],
+    "monthly_output": [["base:power", 100]]
+  }
+]

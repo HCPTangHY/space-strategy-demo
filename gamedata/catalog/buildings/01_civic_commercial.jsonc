@@ -1,0 +1,120 @@
+[
+  // ============================================================================
+  // 建筑分表 01：行政中枢、殖民据点、商业街与具名企业总部 (5 座)
+  // ============================================================================
+  {
+    // 最高行政中枢（政府财政供养）：限建于大区中心选址格，供给主权政区直辖行政力与首都干线运力
+    "id": "base:planetary_capital",
+    "name": "行星首府",
+    "slot_rule": "primary_only",
+    "job_priority": "core",
+    "build_cost": 800,
+    "jobs_by_role": [
+      ["base:bureaucrat", 80],
+      ["base:academic", 40],
+      ["base:engineer", 40],
+      ["base:soldier", 40]
+    ],
+    "tags": ["planetary_capital", "regional_core"],
+    "unique_planet_tags": ["planetary_capital"],
+    "unique_region_tags": ["regional_core"],
+    "required_tags": ["land", "core_site"],
+    "monthly_inputs": [
+      ["base:power", 10],
+      ["base:military_gear", 1]
+    ],
+    "monthly_output": [
+      ["base:admin", 120],
+      ["base:cap_land", 32]
+    ]
+  },
+  {
+    // 地方大区行政与驻军中心（地方政府财政供养）：限建于中心选址格，大幅扩充政区直辖上限与干线运力
+    "id": "base:regional_core",
+    "name": "大区核心",
+    "slot_rule": "primary_only",
+    "job_priority": "core",
+    "build_cost": 400,
+    "jobs_by_role": [
+      ["base:bureaucrat", 70],
+      ["base:engineer", 30],
+      ["base:soldier", 30],
+      ["base:laborer", 20]
+    ],
+    "tags": ["regional_core"],
+    "unique_region_tags": ["regional_core"],
+    "required_tags": ["land", "core_site"],
+    "monthly_inputs": [
+      ["base:power", 5],
+      ["base:military_gear", 1]
+    ],
+    "monthly_output": [
+      ["base:admin", 48],
+      ["base:cap_land", 24]
+    ]
+  },
+  {
+    // 拓荒着陆与新大区开埠据点：零外部物资输入即可独立运转，自带微堆水电、基础陆运与起步行政管理力，后续可原位改建升级为大区核心
+    "id": "base:colonial_outpost",
+    "name": "殖民据点",
+    "slot_rule": "primary_only",
+    "job_priority": "core",
+    "build_cost": 220,
+    "jobs_by_role": [
+      ["base:bureaucrat", 18],
+      ["base:engineer", 12],
+      ["base:soldier", 10],
+      ["base:laborer", 15]
+    ],
+    "tags": ["regional_core"],
+    "unique_region_tags": ["regional_core"],
+    "required_tags": ["land", "core_site"],
+    "monthly_inputs": [],
+    "monthly_output": [
+      ["base:admin", 18],
+      ["base:cap_land", 12],
+      ["base:power", 14],
+      ["base:water", 14]
+    ]
+  },
+  {
+    // 城市日常服务与市内商业配套：工资 39 CR + 投入(电4*3 + 水3*2 = 18 CR) = 57 CR -> 产出服务 16*5 = 80 CR（毛利 +23 CR / +28.8%）
+    "id": "base:commercial_street",
+    "name": "商业街",
+    "slot_rule": "secondary_only",
+    "job_priority": "commercial",
+    "build_cost": 200,
+    "hosting_capacity": 6,
+    "jobs_by_role": [
+      ["base:capitalist", 15],
+      ["base:bureaucrat", 30],
+      ["base:laborer", 20]
+    ],
+    "tags": ["commercial"],
+    "required_primary_tags": ["regional_core", "corporate_campus"],
+    "required_tags": ["land"],
+    "monthly_inputs": [
+      ["base:power", 4],
+      ["base:water", 3]
+    ],
+    "monthly_output": [["base:service", 16]]
+  },
+  {
+    // 具名企业总部与金融商务园区：工资 73.5 CR + 投入(电6*3 = 18 CR) = 91.5 CR -> 产出服务 24*5 = 120 CR（毛利 +28.5 CR / +23.8%）
+    "id": "base:corporate_campus",
+    "name": "企业园区",
+    "slot_rule": "primary_only",
+    "job_priority": "commercial",
+    "build_cost": 350,
+    "hosting_capacity": 18,
+    "jobs_by_role": [
+      ["base:capitalist", 30],
+      ["base:engineer", 35],
+      ["base:bureaucrat", 35]
+    ],
+    "tags": ["corporate_campus"],
+    "required_tags": ["land"],
+    "monthly_inputs": [["base:power", 6]],
+    "monthly_output": [["base:service", 24]]
+  }
+]

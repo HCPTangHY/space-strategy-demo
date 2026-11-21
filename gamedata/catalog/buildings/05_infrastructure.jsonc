@@ -1,0 +1,85 @@
+[
+  // ============================================================================
+  // 建筑分表 05：跨自然大区战略基建枢纽 (4 座，靠跨区运费/过网费自负盈亏)
+  // 对应通道运力与动态费率定义见 ../transport_hubs.jsonc
+  // ============================================================================
+  {
+    // 洲际重载铁路/磁浮货运枢纽：月总成本 = 工资 48 CR + 投入(电6*3 + 合金2*18 = 54 CR) = 102 CR；
+    // 满编产出 200 份陆运力（成本底线 0.51 CR/份；基准价 1.00 CR/份下满载 200 CR，65% 负载 130 CR）
+    "id": "base:intercontinental_rail_hub",
+    "name": "洲际陆运枢纽",
+    "slot_rule": "any",
+    "build_cost": 380,
+    "jobs_by_role": [
+      ["base:laborer", 40],
+      ["base:engineer", 20]
+    ],
+    "tags": ["infrastructure"],
+    "required_tags": ["land"],
+    "monthly_inputs": [
+      ["base:power", 6],
+      ["base:structural_alloy", 2]
+    ],
+    "monthly_output": [["base:cap_land", 200]]
+  },
+  {
+    // 远洋深水集装箱与散货枢纽港（限沿海格）：月总成本 = 工资 51 CR + 投入(燃料3*15 + 装备1*38 + 电4*3 = 95 CR) = 146 CR；
+    // 满编产出 160 份海运力（成本底线 0.91 CR/份；基准价 1.50 CR/份下满载 240 CR，70% 负载 168 CR）
+    "id": "base:deepwater_port",
+    "name": "远洋枢纽港",
+    "slot_rule": "any",
+    "build_cost": 420,
+    "jobs_by_role": [
+      ["base:laborer", 45],
+      ["base:engineer", 20]
+    ],
+    "tags": ["infrastructure"],
+    "required_tags": ["land", "coastal"],
+    "monthly_inputs": [
+      ["base:refined_fuel", 3],
+      ["base:ind_equipment", 1],
+      ["base:power", 4]
+    ],
+    "monthly_output": [["base:cap_sea", 160]]
+  },
+  {
+    // 全地形高超音速/亚轨道点对点投送港：月总成本 = 工资 70.5 CR + 投入(燃料6*15 + 电子2*32 + 电5*3 = 169 CR) = 239.5 CR；
+    // 满编产出 60 份空运力（成本底线 3.99 CR/份；基准价 6.00 CR/份下满载 360 CR，70% 负载 252 CR）
+    "id": "base:suborbital_port",
+    "name": "亚轨道投送港",
+    "slot_rule": "any",
+    "build_cost": 600,
+    "jobs_by_role": [
+      ["base:engineer", 40],
+      ["base:bureaucrat", 15],
+      ["base:laborer", 15]
+    ],
+    "tags": ["infrastructure"],
+    "required_tags": ["land"],
+    "monthly_inputs": [
+      ["base:refined_fuel", 6],
+      ["base:electronics", 2],
+      ["base:power", 5]
+    ],
+    "monthly_output": [["base:cap_air", 60]]
+  },
+  {
+    // 特高压跨区变电与跨流域调水泵站枢纽：月总成本 = 工资 42 CR + 投入(电4*3 + 合金2*18 = 48 CR) = 90 CR；
+    // 满编产出 180 份管网输配力（成本底线 0.50 CR/份；基准价 0.80 CR/份下满载 144 CR，70% 负载 100.8 CR）
+    "id": "base:backbone_grid_hub",
+    "name": "骨干管网枢纽",
+    "slot_rule": "any",
+    "build_cost": 320,
+    "jobs_by_role": [
+      ["base:engineer", 25],
+      ["base:laborer", 20]
+    ],
+    "tags": ["infrastructure"],
+    "required_tags": ["land"],
+    "monthly_inputs": [
+      ["base:power", 4],
+      ["base:structural_alloy", 2]
+    ],
+    "monthly_output": [["base:cap_grid", 180]]
+  }
+]

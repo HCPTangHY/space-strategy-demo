@@ -1,0 +1,34 @@
+// AI 主体交互决策启发式参数（支持运行期热重载，不改变物理配方与仓库容量上限）
+{
+  // 工场挂单定价：低库存分界线（<= 350‰ 按 max(单位成本, 100% 均价) 报价）
+  "ask_low_fill_permille": 350,
+  // 工场挂单定价：常备与积压分界线（350‰..=750‰ 温和下探至 95% 均价，> 750‰ 进入清仓促销）
+  "ask_high_fill_permille": 750,
+  // 满仓清仓时的最低均价比例（800‰ = 80% 均价）
+  "ask_clearance_ma_permille": 800,
+  // 100% 满仓时的单位成本底线比例（500‰ = 允许最低按 50% 成本折价变现回笼周转金）
+  "ask_full_cost_floor_permille": 500,
+  // 连续欠薪工场的破产清盘甩卖均价比例（50 = 50% 均价）
+  "distressed_liquidation_ma_percent": 50,
+  // 可储存实物投入品的目标安全库存月数（2 = 2.0 个月消耗量）
+  "physical_input_buffer_months": 2,
+  // 原料库存不足 1 个月时的紧急加价抢购倍率（112 = 112% 均价）
+  "urgent_input_bid_percent": 112,
+  // 居民家庭余粮不足 1 个月时的紧急抢购倍率（125 = 125% 均价）
+  "household_urgent_staple_bid_percent": 125,
+  // 工场暂停扩招的库存水位线（900‰ = 90% 仓满即停招）
+  "hiring_stop_fill_permille": 900,
+  // 民间资本与企业新建工场的最大预期回本月数（20 个月，对应月预期回报率 >= 5%）
+  "max_payback_months": 20,
+  // 本地民间资金池跨辖区投资的最低资金门槛（CR）
+  "cross_sector_invest_min_credits": 380,
+  // 下级地方政府自主兴建民生建筑前保留的最低财政准备金（CR）
+  "local_polity_reserve_credits": 160,
+  // 区域内自动选址（build_in_region）的启发式打分权重
+  "site_scoring": {
+    "affordable_bonus": 200.0,
+    "same_tile_sibling_bonus": 50.0,
+    "primary_slot_bonus": 8.0,
+    "land_tile_bonus": 15.0
+  }
+}
